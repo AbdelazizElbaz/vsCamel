@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka — Groupes de messages, DLQ & topic de reprise</title>
+<style>
+  :root{
+    --bg:#ffffff; --panel:#f6f8fa; --panel2:#ffffff; --line:#d0d7de; --txt:#1f2328; --mut:#57606a;
+    --A:#3b82f6; --B:#10b981; --C:#f59e0b; --err:#ef4444; --rep:#a78bfa; --dlq:#f87171; --ok:#22c55e; --gold:#facc15;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:"Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{display:flex;align-items:center;gap:16px;padding:10px 20px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  header h1 span{color:var(--mut);font-weight:400}
+  .tabs{margin-left:auto;display:flex;gap:8px}
+  .tab{background:var(--panel);border:1px solid var(--line);color:var(--mut);padding:6px 12px;border-radius:999px;cursor:pointer;font-size:13px}
+  .tab.on{color:var(--txt);border-color:#58a6ff;background:#e8f1ff}
+  #wrap{flex:1 1 auto;position:relative;overflow:hidden}
+  #stage{position:absolute;left:0;top:0;width:1160px;height:830px;transform-origin:0 0}
+  #stage.noanim *{transition:none!important}
+  svg#edges{position:absolute;inset:0;width:1160px;height:830px;overflow:visible}
+  .edge{fill:none;stroke:#9aa4b2;stroke-width:2;transition:stroke .4s,stroke-width .4s,opacity .4s}
+  .edge.rep{stroke:#a693e0;stroke-dasharray:6 5}
+  .edge.dlq{stroke:#e39b9b;stroke-dasharray:6 5}
+  .edge.fix{stroke:#86d3a0;stroke-dasharray:6 5}
+  .edge.hl{stroke:#58a6ff;stroke-width:3.5;stroke-dasharray:8 6;animation:dash 1s linear infinite}
+  .edge.rep.hl{stroke:var(--rep)} .edge.dlq.hl{stroke:var(--dlq)} .edge.fix.hl{stroke:var(--ok)}
+  @keyframes dash{to{stroke-dashoffset:-28}}
+  .elabel{fill:var(--mut);font-size:11px}
+  .box{position:absolute;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+  .box .ttl{position:absolute;left:14px;top:8px;font-size:13px;font-weight:600;letter-spacing:.2px}
+  .box .ttl small{color:var(--mut);font-weight:400;margin-left:6px}
+  .topic-main{background:linear-gradient(180deg,#f6f8fa,#f1f4f8)}
+  .topic-rep{border-color:#b9a8ef;background:linear-gradient(180deg,#f5f3ff,#efebff)}
+  .topic-dlq{border-color:#f1aeae;background:linear-gradient(180deg,#fef2f2,#fde8e8)}
+  .lane{position:absolute;border-radius:8px;background:#ffffff;border:1px dashed #c3ccd6;transition:background .5s,border-color .5s,box-shadow .5s}
+  .lane .pl{position:absolute;left:-40px;top:50%;transform:translateY(-50%);font-size:13px;font-weight:700;color:var(--mut)}
+  .lane .grp{position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--mut)}
+  .lane.susp{background:rgba(239,68,68,.12);border:1px solid var(--err);box-shadow:0 0 18px rgba(239,68,68,.35)}
+  .lane.hl{border:1px solid var(--rep);box-shadow:0 0 18px rgba(167,139,250,.4)}
+  .lane.dlq{border:1px solid var(--dlq);box-shadow:0 0 18px rgba(248,113,113,.45);background:rgba(248,113,113,.08)}
+  .lane.resumed{border:1px solid var(--ok);box-shadow:0 0 14px rgba(34,197,94,.35)}
+  .badge{position:absolute;left:90px;top:-11px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--err);color:#fff;opacity:0;transition:opacity .4s}
+  .lane.susp .badge{opacity:1}
+  .lane.resumed .badge{opacity:1;background:var(--ok)}
+  .cg{border-color:#9cc0ea;background:linear-gradient(180deg,#f0f6ff,#e7effa)}
+  .cons{position:absolute;left:20px;width:160px;height:120px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);transition:border-color .4s,box-shadow .4s}
+  .cons .nm{position:absolute;left:10px;top:6px;font-weight:700;font-size:14px}
+  .cons .as{position:absolute;right:10px;top:8px;font-size:10.5px;color:var(--mut)}
+  .cons .stt{position:absolute;left:10px;right:6px;top:26px;font-size:10px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cons .log{position:absolute;left:10px;right:6px;bottom:6px;font-size:10px;color:#333a42;white-space:nowrap;overflow:hidden}
+  .cons .log b{color:var(--mut);font-weight:400}
+  .cons.busy{border-color:#58a6ff;box-shadow:0 0 14px rgba(88,166,255,.35)}
+  .cons.err,.cons.susp{border-color:var(--err);box-shadow:0 0 14px rgba(239,68,68,.4)}
+  .cons.err .stt,.cons.susp .stt{color:#b91c1c}
+  .cons.ok{border-color:#86d3a0}
+  .cons.ok .stt{color:#15803d}
+  .cons.rep{border-color:var(--rep);box-shadow:0 0 14px rgba(167,139,250,.45)}
+  .cons.rep .stt{color:#6d28d9}
+  .prod{border-color:#9cc0ea}
+  .op{border-color:#86d3a0;background:linear-gradient(180deg,#f0fdf4,#e6f7ec)}
+  .reg{border-color:#d9d08a;background:linear-gradient(180deg,#fefce8,#fbf6d6)}
+  .reg ul{position:absolute;left:14px;right:10px;top:30px;margin:0;padding:0;list-style:none;font-size:11px;color:#854d0e}
+  .reg li{margin:2px 0;animation:pop .5s}
+  .reg .empty{color:var(--mut);font-style:italic}
+  .hash{position:absolute;left:25px;top:340px;width:180px;font-size:11.5px;text-align:center;padding:8px;border-radius:8px;background:#e8f1ff;border:1px solid #58a6ff;opacity:0;transition:opacity .5s}
+  .hash.on{opacity:1}
+  .hash code{color:#1d4ed8}
+  .tok{position:absolute;left:0;top:0;width:52px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff;
+       transition:transform .9s cubic-bezier(.5,.05,.25,1),opacity .6s,background .4s,box-shadow .4s,border-color .4s;border:2px solid rgba(255,255,255,.25);z-index:5;box-shadow:0 4px 10px rgba(0,0,0,.4)}
+  .tok.g-A{background:var(--A)} .tok.g-B{background:var(--B)} .tok.g-C{background:var(--C)}
+  .tok.st-err{border-color:#fff;background:var(--err)!important;box-shadow:0 0 0 4px rgba(239,68,68,.35),0 0 22px rgba(239,68,68,.7);animation:shake .5s 1s 2}
+  .tok.st-copy{background:#7f1d1d!important;border:2px dashed #b91c1c}
+  .tok.st-fixing{background:#7f1d1d!important;border:2px dashed #b91c1c;animation:pulse 1s infinite}
+  .tok.st-fixed{background:var(--B)!important;border:2px solid var(--gold);box-shadow:0 0 18px rgba(250,204,21,.6)}
+  .tok.st-skip{background:#d1d5db!important;color:#9ca3af;text-decoration:line-through;border:2px dashed #6b7280}
+  .tok .sub{position:absolute;top:36px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:10px;font-weight:600;color:#b91c1c}
+  .tok .ico{position:absolute;right:-10px;top:-10px;font-size:15px}
+  @keyframes shake{0%,100%{margin-left:0}25%{margin-left:-5px}75%{margin-left:5px}}
+  @keyframes pulse{50%{box-shadow:0 0 0 6px rgba(250,204,21,.35)}}
+  @keyframes pop{from{opacity:0;transform:scale(.8)}to{opacity:1;transform:none}}
+  .ghost{position:absolute;width:52px;height:34px;border-radius:8px;border:1.5px dashed;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;opacity:.45;animation:pop .6s}
+  .ghost.g-A{border-color:var(--A);color:var(--A)} .ghost.g-B{border-color:var(--B);color:var(--B)} .ghost.g-C{border-color:var(--C);color:var(--C)}
+  .ghost.skip{text-decoration:line-through;border-color:#6b7280;color:#9ca3af}
+  .ghost::after{content:"✓ commit";position:absolute;bottom:-14px;font-size:8.5px;color:var(--mut);text-decoration:none}
+  #summary{position:absolute;inset:40px 120px;background:rgba(255,255,255,.98);border:1px solid #58a6ff;border-radius:16px;padding:26px 34px;z-index:20;opacity:0;pointer-events:none;transition:opacity .6s;overflow:auto}
+  #summary.on{opacity:1;pointer-events:auto}
+  #summary h2{margin:0 0 6px;font-size:22px}
+  #summary .cols{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:14px}
+  #summary h3{margin:0 0 8px;font-size:15px}
+  #summary ul{margin:0;padding-left:18px;font-size:13.5px;line-height:1.55;color:#333a42}
+  #summary .fifo{margin-top:16px;padding:10px 14px;border-radius:10px;background:#f0fdf4;border:1px solid #86d3a0;font-size:14px}
+  #summary .close{position:absolute;right:14px;top:10px;background:none;border:none;color:var(--mut);font-size:20px;cursor:pointer}
+  footer{flex:0 0 auto;border-top:1px solid var(--line);background:var(--panel);padding:12px 20px;display:flex;gap:20px;align-items:stretch}
+  #cap{flex:1;min-height:92px}
+  #cap .meta{font-size:12px;color:var(--mut);margin-bottom:4px}
+  #cap .t{font-size:16px;font-weight:700;margin-bottom:4px}
+  #cap .b{font-size:14px;line-height:1.5;color:#333a42}
+  #cap code{background:#ffffff;border:1px solid var(--line);padding:0 5px;border-radius:5px;color:#1d4ed8;font-size:12.5px}
+  .ctrl{display:flex;flex-direction:column;gap:8px;justify-content:center;min-width:250px}
+  .btns{display:flex;gap:6px}
+  .btns button{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 0;font-size:15px;cursor:pointer}
+  .btns button:hover{border-color:#58a6ff}
+  .btns button.main{background:#1f6feb;border-color:#1f6feb}
+  .prog{height:6px;background:#ffffff;border-radius:3px;overflow:hidden}
+  .prog i{display:block;height:100%;background:linear-gradient(90deg,#1f6feb,#a78bfa);transition:width .4s}
+  .hint{font-size:11px;color:var(--mut);text-align:center}
+  .legend{position:absolute;left:25px;top:440px;width:180px;font-size:11.5px;color:var(--mut);line-height:1.8}
+  .legend i{display:inline-block;width:14px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+  /* thème clair */
+  .btns button.main{color:#fff}
+  .tok{box-shadow:0 3px 8px rgba(0,0,0,.18)}
+  .tok.st-skip{color:#4b5563}
+  .tok .sub{color:#b91c1c}
+  #summary{box-shadow:0 10px 40px rgba(0,0,0,.18)}
+  .box{box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .ghost{opacity:.75!important;background:#fff}
+</style>
+</head>
+<body>
+<header>
+  <h1>Kafka — Gestion des groupes de messages <span>· FIFO, DLQ & topic de reprise</span></h1>
+  <div class="tabs">
+    <button class="tab" data-go="0">① Routage par partition dédiée</button>
+    <button class="tab" data-go="3">② Erreur : DLQ + topic de reprise</button>
+  </div>
+</header>
+
+<div id="wrap"><div id="stage">
+  <svg id="edges"></svg>
+  <div id="boxes"></div>
+  <div id="ghosts"></div>
+  <div id="tokens"></div>
+  <div id="summary">
+    <button class="close" onclick="document.getElementById('summary').classList.remove('on')">✕</button>
+    <h2>Récapitulatif</h2>
+    <div style="color:var(--mut);font-size:13.5px">Deux mécanismes complémentaires pour traiter des groupes de messages dans Kafka en garantissant l'ordre.</div>
+    <div class="cols">
+      <div>
+        <h3 style="color:#1d4ed8">① Routage du groupe vers une partition dédiée</h3>
+        <ul>
+          <li>Clé du message = identifiant du groupe → <code>hash(clé) % nb_partitions</code>.</li>
+          <li>Tous les messages d'un groupe vont dans la même partition, dans l'ordre d'envoi.</li>
+          <li>Une partition n'est lue que par une seule instance du groupe de consommateurs : FIFO garanti par groupe.</li>
+          <li>Les groupes sont traités en parallèle. Avec une partition dédiée par groupe, on a au plus autant de groupes que de partitions.</li>
+        </ul>
+      </div>
+      <div>
+        <h3 style="color:#6d28d9">② Gestion d'erreur : DLQ + topic de reprise</h3>
+        <ul>
+          <li>En cas d'erreur, la partition est suspendue et le message reste bloqué (offset non commité).</li>
+          <li>Une copie est envoyée dans la DLQ, <b>dans la même partition d'origine</b> (P1 → D1), avec l'offset et la cause de l'erreur.</li>
+          <li>L'utilisateur corrige le message et le republie dans le topic de reprise, <b>dans la même partition</b> (D1 → R1).</li>
+          <li>Le topic de reprise est consommé en priorité. Ensuite, le message d'origine est ignoré grâce au registre des messages déjà traités, et la partition est débloquée.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="fifo">✅ Ordre final du groupe B : <b>B1 → B2′ → B3 → B4</b>. Le FIFO est respecté et les groupes A et C n'ont jamais été bloqués.</div>
+    <div style="margin-top:12px;font-size:12.5px;color:var(--mut)">Points d'attention : la DLQ et le topic de reprise doivent avoir le même nombre de partitions que le topic principal · le registre d'idempotence doit être persistant · surveiller la durée de suspension d'une partition (alertes) · prévoir le cas « message non corrigeable » (ignorer explicitement).</div>
+  </div>
+</div></div>
+
+<footer>
+  <div id="cap"><div class="meta"></div><div class="t"></div><div class="b"></div></div>
+  <div class="ctrl">
+    <div class="btns">
+      <button id="bRestart" title="Recommencer">⏮</button>
+      <button id="bPrev" title="Étape précédente">◀</button>
+      <button id="bPlay" class="main" title="Lecture automatique">▶</button>
+      <button id="bNext" title="Étape suivante">▶▶</button>
+    </div>
+    <div class="prog"><i id="progbar"></i></div>
+    <div class="hint">← → pour naviguer · Espace pour lecture/pause</div>
+  </div>
+</footer>
+
+<script>
+const W=1160,H=830;
+const PY=[138,208,278], RY=[425,475,525], CY=[150,300,450];
+const GRP={A:0,B:1,C:2};
+const slotM=(p,k)=>({x:740-k*62,y:PY[p]});
+const slotR=(p,k)=>({x:740-k*62,y:RY[p]});
+const consPos=i=>({x:1005,y:CY[i]+4});
+const PROD={x:115,y:250};
+const DY=[652,705,758];
+const dlqSlot=(p,k)=>({x:740-k*62,y:DY[p]});
+const OPER={x:115,y:725};
+
+/* ---------- Décor statique ---------- */
+const boxes=document.getElementById('boxes');
+function box(cls,x,y,w,h,html){const d=document.createElement('div');d.className='box '+cls;Object.assign(d.style,{left:x+'px',top:y+'px',width:w+'px',height:h+'px'});d.innerHTML=html||'';boxes.appendChild(d);return d;}
+box('prod',25,170,180,160,'<div class="ttl">📤 Producteur</div><div style="position:absolute;left:14px;right:10px;top:34px;font-size:11.5px;color:var(--mut);line-height:1.5">Publie les messages<br>avec <b style="color:#1f2328">clé = id du groupe</b></div>');
+const hash=document.createElement('div');hash.className='hash';hash.innerHTML='partition =<br><code>hash(groupId) % 3</code><br><span style="color:var(--A)">A→P0</span> · <span style="color:var(--B)">B→P1</span> · <span style="color:var(--C)">C→P2</span>';boxes.appendChild(hash);
+const leg=document.createElement('div');leg.className='legend';leg.innerHTML='<i style="background:var(--A)"></i>Groupe A<br><i style="background:var(--B)"></i>Groupe B<br><i style="background:var(--C)"></i>Groupe C<br><i style="background:var(--err)"></i>Message en erreur<br><i style="background:var(--B);outline:2px solid var(--gold)"></i>Message corrigé';boxes.appendChild(leg);
+
+box('topic-main',245,70,555,245,'<div class="ttl">Topic principal <small>commandes.groupes · 3 partitions</small></div>');
+box('topic-rep',245,345,555,215,'<div class="ttl" style="color:#6d28d9">Topic de reprise <small>même structure : 3 partitions · consommé en priorité</small></div>');
+box('topic-dlq',245,590,555,200,'<div class="ttl" style="color:#b91c1c">Topic DLQ <small>même structure : 3 partitions · copie dans la partition d\'origine</small></div>');
+box('op',25,640,180,150,'<div class="ttl" style="color:#15803d">👤 Utilisateur / support</div><div style="position:absolute;left:14px;top:30px;font-size:10.5px;color:var(--mut)">analyse · corrige · republie</div>');
+const reg=box('reg',905,580,200,130,'<div class="ttl" style="color:#854d0e">🗄️ Registre « déjà traités »</div><ul id="regl"></ul>');
+box('cg',905,45,200,515,'<div class="ttl" style="color:#1d4ed8">Groupe de consommateurs</div><div style="position:absolute;left:14px;top:27px;font-size:10px;color:var(--mut)">ordre de poll : ① reprise ② principal</div>');
+
+const lanes={};
+function lane(id,x,y,w,h,label,grp){const d=document.createElement('div');d.className='lane';Object.assign(d.style,{left:x+'px',top:y+'px',width:w+'px',height:h+'px'});d.innerHTML=`<span class="pl">${label}</span><span class="grp">${grp||''}</span><span class="badge"></span>`;boxes.appendChild(d);lanes[id]=d;}
+['A','B','C'].forEach((g,i)=>lane('P'+i,300,PY[i]-24,490,48,'P'+i,'groupe '+g));
+['A','B','C'].forEach((g,i)=>lane('R'+i,300,RY[i]-20,490,40,'R'+i,''));
+[0,1,2].forEach(i=>lane('D'+i,300,DY[i]-21,490,42,'D'+i,''));
+const consEl=[];
+for(let i=0;i<3;i++){const d=document.createElement('div');d.className='cons';d.style.left='925px';d.style.top=(CY[i]-60)+'px';d.innerHTML=`<div class="nm">C${i+1}</div><div class="as">P${i} + R${i}</div><div class="stt"></div><div class="log"></div>`;boxes.appendChild(d);consEl.push(d);}
+
+/* ---------- Flèches ---------- */
+const svg=document.getElementById('edges');
+const edgeDefs=[
+  ['e-prod0','M205 250 C 250 250, 260 '+PY[0]+', 300 '+PY[0],''],
+  ['e-prod1','M205 250 C 250 250, 260 '+PY[1]+', 300 '+PY[1],''],
+  ['e-prod2','M205 250 C 250 250, 260 '+PY[2]+', 300 '+PY[2],''],
+  ...[0,1,2].map(i=>['e-mc'+i,`M790 ${PY[i]} C 860 ${PY[i]}, 870 ${CY[i]-25}, 925 ${CY[i]-25}`,'']),
+  ...[0,1,2].map(i=>['e-rc'+i,`M790 ${RY[i]} C 860 ${RY[i]}, 870 ${CY[i]+25}, 925 ${CY[i]+25}`,'rep']),
+  ['e-dlq','M300 '+PY[1]+' C 228 260, 228 640, 296 '+DY[1],'dlq'],
+  ['e-op','M245 745 L 207 745','dlq'],
+  ['e-rep','M150 640 C 160 560, 240 '+RY[1]+', 296 '+RY[1],'fix'],
+  ['e-reg','M1005 560 L 1005 580',''],
+];
+let svgh='<defs>';
+['#9aa4b2','#58a6ff'].forEach((c,i)=>svgh+=`<marker id="m${i}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="${c}"/></marker>`);
+svgh+='</defs>';
+edgeDefs.forEach(([id,d,c])=>svgh+=`<path id="${id}" class="edge ${c}" d="${d}" marker-end="url(#m0)"/>`);
+svgh+=`<text class="elabel" x="222" y="600" transform="rotate(-86 222 600)" fill="#f87171">copie P1 → D1 (même partition)</text>`;
+svgh+=`<text class="elabel" x="30" y="630" fill="#15803d">republie D1 → R1 (même n°)</text>`;
+svgh+=`<text class="elabel" x="812" y="${RY[0]-12}" fill="#a78bfa">priorité ①</text>`;
+svgh+=`<text class="elabel" x="812" y="${PY[2]+30}">priorité ②</text>`;
+svg.innerHTML=svgh;
+
+/* ---------- Modèle ---------- */
+function fresh(){
+  const t={};
+  for(const g of 'ABC') for(let n=1;n<=4;n++){const id=g+n;t[id]={id,g,label:id,x:PROD.x,y:PROD.y,op:0,st:'',home:slotM(GRP[g],n-1)};}
+  const h=slotM(1,1);
+  t.B2c={id:'B2c',g:'B',label:'B2',x:h.x,y:h.y,op:0,st:'copy',home:h};
+  return {t,cons:[0,1,2].map(()=>({st:'',txt:'En attente',log:[]})),lanes:{},ghosts:[],reg:[],hl:[],hash:false,summary:false};
+}
+function consume(m,id,i,delay=0){const t=m.t[id];const p=consPos(i);Object.assign(t,{x:p.x,y:p.y,op:1,st:t.st==='fixed'?'fixed':'proc',delay});m.cons[i].st='busy';m.cons[i].txt='Traite '+t.label+'…';}
+function done(m,id,i,ghostCls=''){const t=m.t[id];t.op=0;t.st=t.st==='fixed'?'fixed':'done';m.ghosts.push({x:t.home.x,y:t.home.y,g:t.g,label:t.label,cls:ghostCls});if(!ghostCls)m.cons[i].log.push(t.label);}
+const HLC=['e-mc0','e-mc1','e-mc2'];
+
+/* ---------- Scénario ---------- */
+const steps=[
+{scene:1,title:'Architecture',text:`Un producteur publie dans le <b>topic principal</b> (3 partitions). Le <b>groupe de consommateurs</b> a 3 instances qui se partagent les partitions : Kafka garantit qu'une partition n'est lue que par <b>une seule instance</b> du groupe, donc l'ordre est préservé dans chaque partition. Chaque instance C<i>n</i> est aussi assignée à la même partition du <b>topic de reprise</b> (P1 ↔ R1, etc.). Le <b>topic DLQ</b> a lui aussi 3 partitions (D0, D1, D2), qui correspondent aux partitions d'origine.`,
+ run(m){m.hl=['e-mc0','e-mc1','e-mc2','e-rc0','e-rc1','e-rc2'];}},
+{scene:1,title:'Solution ① : chaque groupe est routé vers une partition dédiée',text:`La clé du message est l'identifiant du groupe : <code>partition = hash(groupId) % 3</code>. Tous les messages du groupe A vont dans P0, ceux du groupe B dans P1 et ceux du groupe C dans P2, dans l'ordre d'envoi. Avec une partition par groupe, on peut avoir <b>autant de groupes que de partitions</b>.`,
+ run(m){m.hash=true;m.hl=['e-prod0','e-prod1','e-prod2'];let i=0;for(let n=1;n<=4;n++)for(const g of 'ABC'){const t=m.t[g+n];Object.assign(t,{x:t.home.x,y:t.home.y,op:1,delay:i++*0.18});}}},
+{scene:1,title:'Consommation FIFO en parallèle',text:`Chaque instance lit sa partition offset par offset : C1 lit P0, C2 lit P1 et C3 lit P2. Les groupes sont traités <b>en parallèle</b>, mais <b>dans l'ordre</b> à l'intérieur d'un même groupe. Une fois traité, l'offset est commité.`,
+ run(m){m.hl=HLC;consume(m,'A1',0);consume(m,'B1',1);consume(m,'C1',2);}},
+{scene:2,title:'Erreur sur le message B2',text:`C2 échoue sur <b>B2</b> (donnée invalide, règle métier…). Il est impossible de passer à B3 sans casser l'ordre du groupe B. A2 et C2 sont traités normalement par C1 et C3.`,
+ run(m){m.hl=HLC;done(m,'A1',0);done(m,'B1',1);done(m,'C1',2);consume(m,'A2',0,.3);consume(m,'B2',1,.3);consume(m,'C2',2,.3);m.t.B2.st='err';m.cons[1].st='err';m.cons[1].txt='❌ Échec du traitement de B2';}},
+{scene:2,title:'La partition P1 est suspendue, B2 reste bloqué',text:`P1 est marquée <b>en erreur / suspendue</b> (<code>consumer.pause(P1)</code>). B2 reste à sa position : son offset <b>n'est pas commité</b>, et B3 et B4 attendent derrière lui. Les autres partitions continuent : <b>seul le groupe B est bloqué</b>.`,
+ run(m){m.hl=['e-mc0','e-mc2'];const b=m.t.B2;b.x=b.home.x;b.y=b.home.y;m.lanes.P1='susp';m.cons[1].st='susp';m.cons[1].txt='⏸ P1 suspendue · offset non commité';done(m,'A2',0);done(m,'C2',2);consume(m,'A3',0,.4);consume(m,'C3',2,.4);}},
+{scene:2,title:'Une copie de B2 est déposée dans la DLQ, partition D1',text:`Une <b>copie</b> de B2 est publiée dans le topic DLQ, <b>dans la même partition que l\'origine : D1</b> (<code>partition = 1</code>). La DLQ a la même structure que le topic principal (3 partitions). On garde aussi l\'offset d\'origine et la cause de l\'erreur. L'original reste bloqué dans P1.`,
+ run(m){m.hl=['e-dlq'];const c=m.t.B2c;const p=dlqSlot(1,0);m.lanes.D1='dlq';Object.assign(c,{x:p.x,y:p.y,op:1,sub:'origine P1 · offset 1'});done(m,'A3',0);done(m,'C3',2);consume(m,'A4',0,.4);consume(m,'C4',2,.4);}},
+{scene:2,title:'Un utilisateur prend le message et le corrige',text:`Un utilisateur (support ou métier) récupère B2 dans la DLQ, analyse l'erreur et corrige le contenu. Pendant ce temps, les groupes A et C ont terminé.`,
+ run(m){m.hl=['e-op'];const c=m.t.B2c;m.lanes.D1='';Object.assign(c,{x:OPER.x,y:OPER.y,st:'fixing',sub:'🔧 lu depuis D1'});done(m,'A4',0);done(m,'C4',2);m.cons[0].st='ok';m.cons[0].txt='✓ P0 à jour';m.cons[2].st='ok';m.cons[2].txt='✓ P2 à jour';}},
+{scene:2,title:'Message corrigé : B2′',text:`Le message corrigé <b>B2′</b> garde le <b>même identifiant fonctionnel</b> que B2 (même clé de groupe et même id de message). C'est ce qui permettra ensuite de reconnaître l'original comme déjà traité.`,
+ run(m){m.hl=[];const c=m.t.B2c;Object.assign(c,{label:'B2′',st:'fixed',sub:'✓ corrigé'});}},
+{scene:2,title:'Republication dans le topic de reprise, même partition (R1)',text:`L'utilisateur republie B2′ dans le <b>topic de reprise</b>, dans la <b>même partition : R1</b>. Le numéro vient directement de la partition DLQ d'où il a lu le message (<b>D1 → R1</b>). Les trois topics ont la même structure (<b>P1 = D1 = R1</b>), donc c'est la même instance C2 qui le lira.`,
+ run(m){m.hl=['e-rep'];m.lanes.R1='hl';const c=m.t.B2c;const p=slotR(1,0);Object.assign(c,{x:p.x,y:p.y,sub:'',home:p});}},
+{scene:2,title:'Le topic de reprise est consommé en priorité',text:`À chaque cycle, l'instance lit <b>d'abord le topic de reprise</b>, puis le topic principal. C2 trouve B2′ dans R1 et le traite avec succès.`,
+ run(m){m.hl=['e-rc1'];consume(m,'B2c',1);m.cons[1].st='rep';m.cons[1].txt='① Poll R1 prioritaire → B2′';}},
+{scene:2,title:'Succès : B2 est enregistré comme déjà traité',text:`L'offset de R1 est commité et l'identifiant de B2 est inscrit dans le <b>registre des messages déjà traités</b> (table d'idempotence). Le topic de reprise est vide pour cette partition.`,
+ run(m){m.hl=['e-reg'];done(m,'B2c',1);m.lanes.R1='';m.reg.push('B2 · P1 · offset 1 → via reprise');m.cons[1].st='ok';m.cons[1].txt='✓ B2′ traité · R1 commité';}},
+{scene:2,title:'Retour au topic principal : B2 est ignoré',text:`La reprise est vide : C2 revient au <b>topic principal</b> et relit B2, toujours bloqué dans P1. Le registre indique que B2 a <b>déjà été traité</b> via B2′, donc C2 <b>ne le traite pas</b> et commite simplement l'offset.`,
+ run(m){m.hl=['e-mc1','e-reg'];const b=m.t.B2;const p=consPos(1);Object.assign(b,{x:p.x,y:p.y,st:'skip'});m.cons[1].st='busy';m.cons[1].txt='② B2 déjà traité → ignoré';}},
+{scene:2,title:'La partition P1 est débloquée',text:`L'offset de B2 est commité et la partition reprend (<code>consumer.resume(P1)</code>). B3 est consommé normalement, à la suite.`,
+ run(m){m.hl=['e-mc1'];done(m,'B2',1,'skip');m.lanes.P1='resumed';consume(m,'B3',1,.5);}},
+{scene:2,title:'Le groupe B se termine dans l\'ordre',text:`B3 puis B4 sont traités. L'ordre final du groupe B est <b>B1 → B2′ → B3 → B4</b> : le <b>FIFO est respecté</b> et aucun autre groupe n'a été bloqué.`,
+ run(m){m.lanes.P1='';done(m,'B3',1);consume(m,'B4',1,.4);}},
+{scene:2,title:'Récapitulatif',text:`Le routage par partition dédiée garantit l'ordre par groupe. La DLQ, le topic de reprise prioritaire et le registre d'idempotence permettent de corriger un message sans casser cet ordre.`,
+ run(m){m.hl=[];done(m,'B4',1);m.cons[1].st='ok';m.cons[1].txt='✓ P1 à jour';m.summary=true;}},
+];
+
+/* ---------- Rendu ---------- */
+const stage=document.getElementById('stage');
+const tokLayer=document.getElementById('tokens'),ghostLayer=document.getElementById('ghosts');
+const tokEl={};
+function render(m){
+  for(const id in m.t){const t=m.t[id];let el=tokEl[id];
+    if(!el){el=document.createElement('div');tokLayer.appendChild(el);tokEl[id]=el;}
+    el.className='tok g-'+t.g+(t.st?' st-'+t.st:'');
+    const ico=t.st==='err'?'<span class="ico">⚠️</span>':t.st==='skip'?'<span class="ico">⏭️</span>':'';
+    el.innerHTML=t.label+ico+(t.sub?`<span class="sub">${t.sub}</span>`:'');
+    el.style.transitionDelay=(t.delay||0)+'s';
+    el.style.transform=`translate(${t.x-26}px,${t.y-17}px)`;
+    el.style.opacity=t.op;
+  }
+  ghostLayer.innerHTML=m.ghosts.map(g=>`<div class="ghost g-${g.g} ${g.cls}" style="left:${g.x-26}px;top:${g.y-17}px">${g.label}</div>`).join('');
+  for(const id in lanes){const s=m.lanes[id]||'';lanes[id].className='lane '+s;lanes[id].querySelector('.badge').textContent=s==='susp'?'⛔ SUSPENDUE':s==='resumed'?'▶ REPRISE':'';}
+  m.cons.forEach((c,i)=>{const el=consEl[i];el.className='cons '+c.st;el.querySelector('.stt').textContent=c.txt;el.querySelector('.log').innerHTML='<b>Traités :</b> '+(c.log.join('→')||'—');});
+  document.getElementById('regl').innerHTML=m.reg.length?m.reg.map(r=>`<li>✔ ${r}</li>`).join(''):'<li class="empty">vide</li>';
+  svg.querySelectorAll('.edge').forEach(e=>e.classList.toggle('hl',m.hl.includes(e.id)));
+  hash.classList.toggle('on',m.hash);
+  document.getElementById('summary').classList.toggle('on',m.summary);
+}
+
+let cur=0;
+function go(n){
+  n=Math.max(0,Math.min(steps.length-1,n));
+  const m=fresh();
+  for(let i=0;i<n;i++){for(const k in m.t)m.t[k].delay=0;steps[i].run(m);}
+  for(const k in m.t)m.t[k].delay=0;
+  stage.classList.add('noanim');render(m);void stage.offsetWidth;stage.classList.remove('noanim');
+  requestAnimationFrame(()=>{for(const k in m.t)m.t[k].delay=0;steps[n].run(m);render(m);});
+  cur=n;
+  const s=steps[n];
+  document.querySelector('#cap .meta').textContent=`Scène ${s.scene} · Étape ${n+1} / ${steps.length}`;
+  document.querySelector('#cap .t').textContent=s.title;
+  document.querySelector('#cap .b').innerHTML=s.text;
+  document.getElementById('progbar').style.width=((n+1)/steps.length*100)+'%';
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',(+t.dataset.go===0&&s.scene===1)||(+t.dataset.go===3&&s.scene===2)));
+}
+
+/* ---------- Contrôles ---------- */
+let timer=null;
+const bPlay=document.getElementById('bPlay');
+function stop(){clearTimeout(timer);timer=null;bPlay.textContent='▶';}
+function play(){bPlay.textContent='⏸';const tick=()=>{if(cur>=steps.length-1){stop();return;}go(cur+1);timer=setTimeout(tick,5200);};if(cur>=steps.length-1)go(0);timer=setTimeout(tick,600);}
+bPlay.onclick=()=>timer?stop():play();
+document.getElementById('bNext').onclick=()=>{stop();go(cur+1);};
+document.getElementById('bPrev').onclick=()=>{stop();go(cur-1);};
+document.getElementById('bRestart').onclick=()=>{stop();go(0);};
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{stop();go(+t.dataset.go);});
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight'){stop();go(cur+1);}
+  else if(e.key==='ArrowLeft'){stop();go(cur-1);}
+  else if(e.key===' '){e.preventDefault();timer?stop():play();}
+});
+function fit(){const w=document.getElementById('wrap');const s=Math.min(w.clientWidth/W,w.clientHeight/H);stage.style.transform=`scale(${s})`;stage.style.left=((w.clientWidth-W*s)/2)+'px';stage.style.top=((w.clientHeight-H*s)/2)+'px';}
+window.addEventListener('resize',fit);fit();
+go(0);
+</script>
+</body>
+</html>

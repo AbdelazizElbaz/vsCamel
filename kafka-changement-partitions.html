@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka — Changer le nombre de partitions : impact sur le routage et le FIFO</title>
+<style>
+  :root{
+    --bg:#ffffff; --panel:#f6f8fa; --panel2:#ffffff; --line:#d0d7de; --txt:#1f2328; --mut:#57606a;
+    --A:#3b82f6; --B:#10b981; --C:#f59e0b; --D:#ec4899; --E:#06b6d4; --F:#84cc16;
+    --err:#ef4444; --ok:#22c55e; --gold:#facc15; --new:#a78bfa;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:"Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{display:flex;align-items:center;gap:16px;padding:10px 20px;border-bottom:1px solid var(--line)}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  header h1 span{color:var(--mut);font-weight:400}
+  .tabs{margin-left:auto;display:flex;gap:8px}
+  .tab{background:var(--panel);border:1px solid var(--line);color:var(--mut);padding:6px 12px;border-radius:999px;cursor:pointer;font-size:13px}
+  .tab.on{color:var(--txt);border-color:#58a6ff;background:#e8f1ff}
+  #wrap{flex:1 1 auto;position:relative;overflow:hidden}
+  #stage{position:absolute;left:0;top:0;width:1160px;height:830px;transform-origin:0 0}
+  #stage.noanim *{transition:none!important}
+  svg#edges{position:absolute;inset:0;width:1160px;height:830px;overflow:visible;pointer-events:none}
+  .box{position:absolute;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+  .box .ttl{position:absolute;left:14px;top:8px;font-size:13px;font-weight:600}
+  .box .ttl small{color:var(--mut);font-weight:400;margin-left:6px}
+  .topic{background:linear-gradient(180deg,#f6f8fa,#f1f4f8);transition:border-color .5s,box-shadow .5s}
+  .topic.alter{border-color:var(--new);box-shadow:0 0 22px rgba(167,139,250,.35)}
+  .banner{position:absolute;right:14px;top:7px;font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;background:var(--new);color:#1a1033;opacity:0;transition:opacity .5s}
+  .banner.on{opacity:1}
+  .lane{position:absolute;border-radius:8px;background:#ffffff;border:1px dashed #c3ccd6;transition:background .5s,border-color .5s,box-shadow .5s,opacity .6s}
+  .lane .pl{position:absolute;left:-40px;top:50%;transform:translateY(-50%);font-size:13px;font-weight:700;color:var(--mut)}
+  .lane .asg{position:absolute;left:calc(100% + 10px);top:50%;transform:translateY(-50%);font-size:11px;color:#1d4ed8;white-space:nowrap;transition:opacity .5s}
+  .lane .badge{position:absolute;left:12px;top:-11px;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;color:#fff;opacity:0;transition:opacity .4s}
+  .lane.hide{opacity:0}
+  .lane.susp{background:rgba(239,68,68,.12);border:1px solid var(--err);box-shadow:0 0 16px rgba(239,68,68,.3)}
+  .lane.susp .badge{opacity:1;background:var(--err)}
+  .lane.new{border:1px solid var(--new);background:rgba(167,139,250,.08);box-shadow:0 0 16px rgba(167,139,250,.3)}
+  .lane.new .badge{opacity:1;background:var(--new);color:#1a1033}
+  .lane.empty{border:1px solid var(--ok)}
+  .lane.empty .badge{opacity:1;background:var(--ok);color:#052e12}
+  .cg{border-color:#9cc0ea;background:linear-gradient(180deg,#f0f6ff,#e7effa)}
+  .cons{position:absolute;left:20px;width:160px;height:110px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);transition:border-color .4s,box-shadow .4s}
+  .cons .nm{position:absolute;left:10px;top:6px;font-weight:700;font-size:14px}
+  .cons .as{position:absolute;right:10px;top:8px;font-size:10.5px;color:#1d4ed8}
+  .cons .stt{position:absolute;left:10px;right:6px;bottom:8px;font-size:10px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cons.busy{border-color:#58a6ff;box-shadow:0 0 14px rgba(88,166,255,.35)}
+  .cons.err{border-color:var(--err);box-shadow:0 0 14px rgba(239,68,68,.4)} .cons.err .stt{color:#b91c1c}
+  .cons.bad{border-color:var(--err);box-shadow:0 0 18px rgba(239,68,68,.55)} .cons.bad .stt{color:#b91c1c}
+  .cons.ok{border-color:#86d3a0} .cons.ok .stt{color:#15803d}
+  .prod{border-color:#9cc0ea;transition:border-color .4s}
+  .prod.paused{border-color:var(--gold)}
+  .pbadge{position:absolute;right:10px;top:9px;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--gold);color:#2a2000;opacity:0;transition:opacity .4s}
+  .prod.paused .pbadge{opacity:1}
+  .legend{position:absolute;left:25px;top:215px;width:200px;font-size:11.5px;color:var(--mut);line-height:1.9}
+  .legend i{display:inline-block;width:14px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+  table.rt{position:absolute;left:14px;right:14px;top:34px;border-collapse:collapse;font-size:12px}
+  .rt th{color:var(--mut);font-weight:500;text-align:left;padding:3px 6px;border-bottom:1px solid var(--line)}
+  .rt td{padding:4px 6px;border-bottom:1px solid #e5e9ef;transition:background .5s,color .5s}
+  .rt .c5{opacity:0;transition:opacity .5s}
+  .rt.m5 .c5{opacity:1}
+  .rt.m5 tr.mv td{background:rgba(239,68,68,.12)}
+  .rt.m5 tr.mv td.eff{color:#b91c1c;font-weight:600}
+  .rt.m5 tr.st td.eff{color:#15803d}
+  .rt code{color:#1d4ed8}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+  .ord{position:absolute;left:14px;right:14px;top:34px;font-size:12.5px}
+  .ord div{display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #e5e9ef;min-height:27px}
+  .ord .g{width:22px;font-weight:700}
+  .ord .seq{flex:1}
+  .ord .seq span{display:inline-block;padding:1px 6px;border-radius:5px;margin-right:2px;background:#ffffff;border:1px solid #c3ccd6;font-size:11.5px;animation:pop .5s}
+  .ord .seq span.bad{border-color:var(--err);background:rgba(239,68,68,.18);color:#991b1b}
+  .ord .seq i{color:var(--mut);font-style:normal;margin:0 2px}
+  .ord .res{font-size:11px;font-weight:700;white-space:nowrap}
+  .ord .res.ko{color:#b91c1c} .ord .res.okk{color:#15803d}
+  .tok{position:absolute;left:0;top:0;width:52px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff;
+       transition:transform .9s cubic-bezier(.5,.05,.25,1),opacity .6s,background .4s,box-shadow .4s,border-color .4s,filter .4s;border:2px solid rgba(255,255,255,.25);z-index:5;box-shadow:0 4px 10px rgba(0,0,0,.4)}
+  .tok.g-A{background:var(--A)} .tok.g-B{background:var(--B)} .tok.g-C{background:var(--C)} .tok.g-D{background:var(--D)} .tok.g-E{background:var(--E)} .tok.g-F{background:var(--F)}
+  .tok.st-err{border-color:#fff;background:var(--err)!important;box-shadow:0 0 0 4px rgba(239,68,68,.35),0 0 22px rgba(239,68,68,.7)}
+  .tok.st-blocked{filter:saturate(.35) brightness(.8);border:2px solid var(--err)}
+  .tok.st-fixed{border:2px solid var(--gold);box-shadow:0 0 18px rgba(250,204,21,.6)}
+  .tok.st-bad{border:2px solid #fff;box-shadow:0 0 0 4px rgba(239,68,68,.5),0 0 22px rgba(239,68,68,.8)}
+  .tok .sub{position:absolute;top:36px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:9.5px;font-weight:700;color:#b91c1c}
+  .tok .ico{position:absolute;right:-10px;top:-10px;font-size:15px}
+  .tok.st-copy{background:#7f1d1d!important;border:2px dashed #b91c1c}
+  .side{border-color:#b9a8ef;background:linear-gradient(180deg,#f5f3ff,#efebff)}
+  .side.dlqb{border-color:#f1aeae;background:linear-gradient(180deg,#fef2f2,#fde8e8)}
+  .side .sst{position:absolute;left:14px;top:32px;width:118px;font-size:11px;line-height:1.4;color:var(--mut)}
+  .side .sst.warn{color:#b91c1c;font-weight:600} .side .sst.good{color:#15803d;font-weight:600}
+  .cell{position:absolute;top:30px;width:64px;height:42px;border-radius:7px;border:1px dashed #9aa4b2;background:#ffffff;font-size:11px;font-weight:700;color:var(--mut);display:flex;align-items:flex-start;justify-content:flex-start;padding:2px 5px;transition:opacity .5s,border-color .5s}
+  .cell.hide{opacity:0}
+  .cell.miss{opacity:1;border:1px dashed var(--err);background:rgba(239,68,68,.08);color:#b91c1c}
+  .cell.miss::after{content:"absente";position:absolute;bottom:3px;left:6px;font-size:9.5px;font-weight:600}
+  .cell.new{border:1px solid var(--new)}
+  @keyframes pop{from{opacity:0;transform:scale(.8)}to{opacity:1;transform:none}}
+  .ghost{position:absolute;width:52px;height:34px;border-radius:8px;border:1.5px dashed;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;opacity:.4;animation:pop .6s}
+  .ghost.g-A{border-color:var(--A);color:var(--A)} .ghost.g-B{border-color:var(--B);color:var(--B)} .ghost.g-C{border-color:var(--C);color:var(--C)} .ghost.g-D{border-color:var(--D);color:var(--D)} .ghost.g-E{border-color:var(--E);color:var(--E)} .ghost.g-F{border-color:var(--F);color:var(--F)}
+  #summary{position:absolute;inset:30px 90px;background:rgba(255,255,255,.98);border:1px solid #58a6ff;border-radius:16px;padding:24px 32px;z-index:20;opacity:0;pointer-events:none;transition:opacity .6s;overflow:auto}
+  #summary.on{opacity:1;pointer-events:auto}
+  #summary h2{margin:0 0 6px;font-size:22px}
+  #summary .cols{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:14px}
+  #summary h3{margin:0 0 8px;font-size:15px}
+  #summary ul,#summary ol{margin:0;padding-left:18px;font-size:13.5px;line-height:1.55;color:#333a42}
+  #summary code{background:#ffffff;border:1px solid var(--line);padding:0 5px;border-radius:5px;color:#1d4ed8;font-size:12.5px}
+  #summary .key{margin-top:16px;padding:10px 14px;border-radius:10px;background:#e8f1ff;border:1px solid #9cc0ea;font-size:14px}
+  #summary .close{position:absolute;right:14px;top:10px;background:none;border:none;color:var(--mut);font-size:20px;cursor:pointer}
+  footer{border-top:1px solid var(--line);background:var(--panel);padding:12px 20px;display:flex;gap:20px}
+  #cap{flex:1;min-height:92px}
+  #cap .meta{font-size:12px;color:var(--mut);margin-bottom:4px}
+  #cap .t{font-size:16px;font-weight:700;margin-bottom:4px}
+  #cap .b{font-size:14px;line-height:1.5;color:#333a42}
+  #cap code{background:#ffffff;border:1px solid var(--line);padding:0 5px;border-radius:5px;color:#1d4ed8;font-size:12.5px}
+  .ctrl{display:flex;flex-direction:column;gap:8px;justify-content:center;min-width:250px}
+  .btns{display:flex;gap:6px}
+  .btns button{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 0;font-size:15px;cursor:pointer}
+  .btns button:hover{border-color:#58a6ff}
+  .btns button.main{background:#1f6feb;border-color:#1f6feb}
+  .prog{height:6px;background:#ffffff;border-radius:3px;overflow:hidden}
+  .prog i{display:block;height:100%;background:linear-gradient(90deg,#1f6feb,#a78bfa);transition:width .4s}
+  .hint{font-size:11px;color:var(--mut);text-align:center}
+  /* thème clair */
+  .btns button.main{color:#fff}
+  .tok{box-shadow:0 3px 8px rgba(0,0,0,.18)}
+  .tok.st-skip{color:#4b5563}
+  .tok .sub{color:#b91c1c}
+  #summary{box-shadow:0 10px 40px rgba(0,0,0,.18)}
+  .box{box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .ghost{opacity:.75!important;background:#fff}
+</style>
+</head>
+<body>
+<header>
+  <h1>Kafka — Changer le nombre de partitions <span>· impact sur le routage et le FIFO</span></h1>
+  <div class="tabs">
+    <button class="tab" data-go="0">① Avant : 3 partitions</button>
+    <button class="tab" data-go="6">② Passage à 5 partitions</button>
+    <button class="tab" data-go="12">③ Procédure sûre</button>
+  </div>
+</header>
+
+<div id="wrap"><div id="stage">
+  <svg id="edges"></svg>
+  <div id="boxes"></div>
+  <div id="ghosts"></div>
+  <div id="tokens"></div>
+  <div id="summary">
+    <button class="close" onclick="document.getElementById('summary').classList.remove('on')">✕</button>
+    <h2>Changer le nombre de partitions : ce qu'il faut retenir</h2>
+    <div style="color:var(--mut);font-size:13.5px">Le code de routage ne change pas (<code>hash(clé) % N</code>), mais quand <b>N</b> change, <b>le résultat change</b>.</div>
+    <div class="cols">
+      <div>
+        <h3 style="color:#b91c1c">Pourquoi ça casse</h3>
+        <ul>
+          <li>La plupart des groupes changent de partition : environ <b>80 %</b> de 3 à 5 partitions, <b>50 %</b> de 3 à 6.</li>
+          <li>Kafka <b>ne déplace pas</b> les messages déjà écrits. Les anciens messages d'un groupe restent dans l'ancienne partition, les nouveaux vont dans la nouvelle.</li>
+          <li>Deux partitions sont lues en parallèle, donc les nouveaux messages peuvent passer <b>avant</b> les anciens (B3 avant B2, D3 avant D2, E3 avant E2).</li>
+          <li>Un groupe peut arriver dans une partition suspendue et se retrouver bloqué par l'erreur d'un autre groupe (le groupe C).</li>
+          <li>La DLQ et le topic de reprise doivent être agrandis <b>en même temps</b> : un message en erreur est copié dans la même partition DLQ, puis republié dans la même partition de reprise.</li>
+          <li>On peut ajouter des partitions, jamais en retirer.</li>
+        </ul>
+      </div>
+      <div>
+        <h3 style="color:#15803d">Les solutions</h3>
+        <ol>
+          <li><b>Prévoir large dès le départ</b> (12, 24, 60 partitions) et ajouter des <b>instances de consommateurs</b> au lieu de partitions. Le routage ne change jamais.</li>
+          <li><b>Vider avant d'agrandir</b> : mettre les producteurs en pause, vider le topic principal, le topic de reprise et la DLQ, agrandir les trois topics, puis reprendre.</li>
+          <li><b>Créer un nouveau topic</b> avec N partitions : finir l'ancien topic avant de lire le nouveau.</li>
+          <li><b>Utiliser des paniers fixes</b> : <code>panier = hash(clé) % 1024</code> ne change jamais, et une table indique la partition de chaque panier. On déplace les paniers un par un, après les avoir vidés.</li>
+        </ol>
+      </div>
+    </div>
+    <div class="key">💡 Le nombre de partitions fixe le <b>parallélisme maximal</b>. Pour grandir sans casser l'ordre, on ajoute des consommateurs, pas des partitions.</div>
+  </div>
+</div></div>
+
+<footer>
+  <div id="cap"><div class="meta"></div><div class="t"></div><div class="b"></div></div>
+  <div class="ctrl">
+    <div class="btns">
+      <button id="bRestart" title="Recommencer">⏮</button>
+      <button id="bPrev" title="Étape précédente">◀</button>
+      <button id="bPlay" class="main" title="Lecture automatique">▶</button>
+      <button id="bNext" title="Étape suivante">▶▶</button>
+    </div>
+    <div class="prog"><i id="progbar"></i></div>
+    <div class="hint">← → pour naviguer · Espace pour lecture/pause</div>
+  </div>
+</footer>
+
+<script>
+const W=1160,H=830;
+const PY=[105,170,235,300,365], CY=[125,255,385];
+const slot=(p,k)=>({x:740-k*62,y:PY[p]});
+const consPos=i=>({x:1005,y:CY[i]+2});
+const PROD={x:125,y:120};
+const HASH={A:15,B:7,C:11,D:9,E:13,F:17};
+const p3=g=>HASH[g]%3, p5=g=>HASH[g]%5;
+
+/* ---------- Décor ---------- */
+const boxes=document.getElementById('boxes');
+function box(cls,x,y,w,h,html){const d=document.createElement('div');d.className='box '+cls;Object.assign(d.style,{left:x+'px',top:y+'px',width:w+'px',height:h+'px'});d.innerHTML=html||'';boxes.appendChild(d);return d;}
+const prod=box('prod',25,50,200,140,'<div class="ttl">📤 Producteur</div><span class="pbadge">⏸ EN PAUSE</span><div style="position:absolute;left:14px;right:10px;top:34px;font-size:11.5px;color:var(--mut);line-height:1.6">clé = id du groupe<br><code style="color:#1d4ed8">partition =<br>hash(clé) % N</code><br><span id="nval" style="color:#1f2328">N = 3</span></div>');
+const leg=document.createElement('div');leg.className='legend';
+leg.innerHTML='<i style="background:var(--A)"></i>A <i style="background:var(--B);margin-left:8px"></i>B <i style="background:var(--C);margin-left:8px"></i>C<br><i style="background:var(--D)"></i>D <i style="background:var(--E);margin-left:8px"></i>E <i style="background:var(--F);margin-left:8px"></i>F<br><i style="background:var(--err)"></i>Message en erreur<br><i style="background:#555;outline:2px solid var(--err)"></i>Bloqué (🔒)<br><i style="background:#888;box-shadow:0 0 0 3px rgba(239,68,68,.6)"></i>Traité hors ordre (⚠)<br><i style="background:transparent;border:1px solid var(--new)"></i>Nouvelle partition';
+boxes.appendChild(leg);
+const topic=box('topic',245,40,555,395,'<div class="ttl">Topic principal <small id="tsub">3 partitions</small></div><span class="banner">⚙ ALTER : 3 → 5 partitions</span>');
+box('cg',905,40,200,420,'<div class="ttl" style="color:#1d4ed8">Groupe de consommateurs</div>');
+let rows='';for(const g of 'ABCDEF'){const mv=p3(g)!==p5(g);rows+=`<tr class="${mv?'mv':'st'}"><td><span class="dot" style="background:var(--${g})"></span>${g}</td><td>${HASH[g]}</td><td>P${p3(g)}</td><td class="c5">P${p5(g)}</td><td class="c5 eff">${mv?'⚠ déplacé P'+p3(g)+' → P'+p5(g):'✓ inchangé'}</td></tr>`;}
+box('rtbox',25,475,500,235,`<div class="ttl">Table de routage <small>hash simplifié pour l'exemple</small></div><table class="rt" id="rt"><tr><th>Groupe</th><th>hash(clé)</th><th>% 3</th><th class="c5">% 5</th><th class="c5">Effet</th></tr>${rows}</table>`);
+box('ordbox',545,475,560,235,'<div class="ttl">Ordre de traitement réel par groupe</div><div class="ord" id="ord"></div>');
+const sideBoxes={};
+[['rep','Topic de reprise','',25],['dlq','Topic DLQ','dlqb',575]].forEach(([k,t,c,x])=>{
+  let cells='';for(let i=0;i<5;i++)cells+=`<div class="cell" data-i="${i}" style="left:${130+i*72}px">${k==='rep'?'R':'D'}${i}</div>`;
+  sideBoxes[k]=box('side '+c,x,725,530,95,`<div class="ttl" style="color:${k==='rep'?'#6d28d9':'#b91c1c'}">${t}</div><div class="sst"></div>${cells}`);
+});
+const dlqCell=p=>({x:575+130+p*72+32,y:725+30+21});
+
+const lanes={};
+for(let i=0;i<5;i++){const d=document.createElement('div');d.className='lane';Object.assign(d.style,{left:'300px',top:(PY[i]-23)+'px',width:'490px',height:'46px'});d.innerHTML=`<span class="pl">P${i}</span><span class="badge"></span><span class="asg"></span>`;boxes.appendChild(d);lanes['P'+i]=d;}
+const consEl=[];
+for(let i=0;i<3;i++){const d=document.createElement('div');d.className='cons';d.style.left='925px';d.style.top=(CY[i]-55)+'px';d.innerHTML=`<div class="nm">C${i+1}</div><div class="as"></div><div class="stt"></div>`;boxes.appendChild(d);consEl.push(d);}
+document.getElementById('edges').innerHTML='<defs><marker id="m0" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#58a6ff"/></marker></defs><path d="M225 120 L 296 120" stroke="#9aa4b2" stroke-width="2" fill="none" marker-end="url(#m0)"/>';
+
+/* ---------- Modèle ---------- */
+const PHASE1=[['A1','D1','A2','D2'],['B1','E1','B2','E2'],['C1','F1','C2','F2']];
+const NEW=['A3','B3','C3','D3','E3','F3'];
+function fresh(){
+  const t={};
+  PHASE1.forEach((l,p)=>l.forEach((id,k)=>t[id]={id,g:id[0],label:id,x:PROD.x,y:PROD.y,op:0,st:'',home:slot(p,k)}));
+  const cnt=[4,4,4,0,0];
+  for(const id of NEW){const g=id[0];const p=p5(g);const k=cnt[p]++;const mv=p3(g)!==p;t[id]={id,g,label:id,x:PROD.x,y:PROD.y,op:0,st:'',home:slot(p,k),sub:mv?'avant : P'+p3(g):''};}
+  const h=slot(1,2);t.B2c={id:'B2c',g:'B',label:'B2',x:h.x,y:h.y,op:0,st:'copy',home:h};
+  return {t,np:3,mod5:false,banner:false,paused:false,sideN:3,sideWarn:false,
+    assign:{P0:'C1',P1:'C2',P2:'C3'},
+    cons:[0,1,2].map(i=>({st:'',txt:'En attente',as:'P'+i})),
+    lanes:{},ghosts:[],order:{A:[],B:[],C:[],D:[],E:[],F:[]},proc:{A:[],B:[],C:[],D:[],E:[],F:[]},summary:false};
+}
+function consume(m,id,i,delay=0,txt){const t=m.t[id];const p=consPos(i);Object.assign(t,{x:p.x,y:p.y,op:1,delay});if(t.st!=='fixed'&&t.st!=='err')t.st='';m.cons[i].st='busy';m.cons[i].txt=txt||('Traite '+t.label+'…');}
+function done(m,id,i){
+  const t=m.t[id];t.op=0;m.ghosts.push({x:t.home.x,y:t.home.y,g:t.g,label:t.label});
+  const n=parseInt(t.label.slice(1));const pr=m.proc[t.g];
+  let bad=false;for(let j=1;j<n;j++)if(!pr.includes(j))bad=true;
+  const prev=m.order[t.g].length?Math.max(...pr):0; if(n<prev)bad=true;
+  pr.push(n);m.order[t.g].push({l:t.label,bad});
+  if(m.cons[i].st!=='bad'){m.cons[i].st='';m.cons[i].txt='En attente';}
+}
+function alter(m){
+  m.np=5;m.mod5=true;m.banner=true;m.lanes.P3='new';m.lanes.P4='new';
+  m.assign={P0:'C1',P1:'C2',P2:'C3',P3:'C1',P4:'C2'};
+  m.cons[0].as='P0 + P3';m.cons[1].as='P1 + P4';m.cons[2].as='P2';
+}
+function produceNew(m){let i=0;for(const id of NEW){const t=m.t[id];Object.assign(t,{x:t.home.x,y:t.home.y,op:1,delay:i++*0.2});}}
+function resetTo(m,n){const f=fresh();for(let i=0;i<=n;i++)steps[i].run(f);for(const k in f.t)f.t[k].delay=0;Object.keys(m).forEach(k=>delete m[k]);Object.assign(m,f);}
+
+/* ---------- Scénario ---------- */
+const steps=[
+{scene:1,title:'Point de départ : 3 partitions',text:`Le topic principal a <b>3 partitions</b>. Chaque instance du groupe de consommateurs en lit une. Le producteur calcule <code>partition = hash(groupId) % 3</code>. La table de routage montre où va chaque groupe (valeurs de hash simplifiées pour l'exemple).`,
+ run(m){}},
+{scene:1,title:'Production : chaque groupe a « sa » partition',text:`A et D vont dans P0, B et E dans P1, C et F dans P2. Tous les messages d'un groupe sont dans la même partition, donc l'ordre est garanti.`,
+ run(m){let i=0;for(let k=0;k<4;k++)for(let p=0;p<3;p++){const t=m.t[PHASE1[p][k]];Object.assign(t,{x:t.home.x,y:t.home.y,op:1,delay:i++*0.15});}}},
+{scene:1,title:'Consommation normale',text:`Chaque instance lit sa partition dans l'ordre des offsets. Le panneau du bas suit l'ordre réel dans lequel chaque groupe est traité.`,
+ run(m){consume(m,'A1',0);consume(m,'B1',1);consume(m,'C1',2);}},
+{scene:1,title:'Tout est dans l\'ordre',text:`D1, E1 et F1 sont traités. Pour l'instant, chaque groupe respecte son FIFO.`,
+ run(m){done(m,'A1',0);done(m,'B1',1);done(m,'C1',2);consume(m,'D1',0,.3);consume(m,'E1',1,.3);consume(m,'F1',2,.3);}},
+{scene:1,title:'Erreur sur B2',text:`C2 échoue sur <b>B2</b>. Comme dans le mécanisme DLQ + reprise, la partition P1 va être suspendue en attendant la correction.`,
+ run(m){done(m,'D1',0);done(m,'E1',1);done(m,'F1',2);consume(m,'A2',0,.3);consume(m,'B2',1,.3);consume(m,'C2',2,.3);m.t.B2.st='err';m.cons[1].st='err';m.cons[1].txt='❌ Échec de B2';}},
+{scene:1,title:'Il reste des messages en attente',text:`P1 est suspendue : B2 est en erreur et E2 est bloqué derrière lui. Une copie de B2 est déposée dans la DLQ, <b>dans la même partition d'origine : D1</b>. Dans P0 et P2, D2 et F2 n'ont pas encore été lus. <b>Il y a presque toujours des messages en attente</b>, par simple retard des consommateurs ou à cause d'une partition suspendue.`,
+ run(m){const b=m.t.B2;b.x=b.home.x;b.y=b.home.y;m.lanes.P1='susp';m.t.E2.st='blocked';m.cons[1].st='err';m.cons[1].txt='⏸ P1 suspendue (B2 en erreur)';done(m,'A2',0);done(m,'C2',2);const c=m.t.B2c,d=dlqCell(1);Object.assign(c,{x:d.x,y:d.y,op:1,delay:.4});}},
+{scene:2,title:'On passe de 3 à 5 partitions',text:`L'administrateur exécute <code>kafka-topics --alter --partitions 5</code>. <b>Le code du producteur ne change pas</b>, mais N vaut maintenant 5, donc <code>hash % 5</code> donne un autre résultat : <b>4 groupes sur 6 changent de partition</b> (en rouge dans la table). Kafka <b>ne déplace pas</b> les messages déjà écrits. Les consommateurs se rééquilibrent : C1 lit P0 et P3, C2 lit P1 et P4. ⚠ Le topic de reprise et la DLQ sont restés à <b>3 partitions</b> : P3 et P4 n'ont pas d'équivalent R3/R4 ni D3/D4.`,
+ run(m){alter(m);m.sideWarn=true;}},
+{scene:2,title:'Les nouveaux messages partent ailleurs',text:`A3 et F3 restent dans leur partition. Mais <b>B3 part dans P2</b> alors que B2 est toujours bloqué dans P1. <b>D3 part dans P4</b>, alors que D2 attend dans P0. <b>E3 part dans P3</b> et <b>C3 arrive dans P1</b>, la partition suspendue.`,
+ run(m){produceNew(m);m.t.C3.st='blocked';}},
+{scene:2,title:'Lecture en parallèle : l\'ordre n\'est plus garanti',text:`C1 lit la nouvelle partition P3 et traite <b>E3 avant E2</b>, qui est encore bloqué. C2 ne peut pas lire P1 (suspendue) et traite donc P4 : <b>D3 passe avant D2</b>, qui attend toujours dans P0.`,
+ run(m){m.banner=false;consume(m,'E3',0,0,'Lit P3 → E3');consume(m,'D3',1,0,'P1 suspendue → lit P4 : D3');m.cons[1].st='busy';consume(m,'F2',2);}},
+{scene:2,title:'Le FIFO est cassé pour les groupes B, D et E',text:`E3 et D3 sont traités hors ordre ⚠. C3 traite ensuite <b>B3</b>, alors que B2 est toujours en erreur dans P1 : <b>B3 passe avant B2</b>. C1 traite D2, <b>après</b> D3.`,
+ run(m){done(m,'E3',0);done(m,'D3',1);done(m,'F2',2);m.cons[0].st='bad';m.cons[0].txt='⚠ E3 traité avant E2';m.cons[1].st='bad';m.cons[1].txt='⚠ D3 traité avant D2';consume(m,'B3',2,.3,'Lit P2 → B3');consume(m,'D2',0,.3,'Lit P0 → D2 (après D3 !)');m.cons[0].st='bad';}},
+{scene:2,title:'Le groupe C est maintenant bloqué par l\'erreur du groupe B',text:`B3 est traité hors ordre ⚠. Autre effet : C3 a été routé vers P1, la partition suspendue, donc <b>le groupe C est bloqué par une erreur du groupe B</b>. Seuls les groupes A et F, qui n'ont pas bougé, restent corrects.`,
+ run(m){done(m,'B3',2);done(m,'D2',0);m.cons[2].st='bad';m.cons[2].txt='⚠ B3 traité avant B2';consume(m,'F3',2,.3);consume(m,'A3',0,.3);}},
+{scene:2,title:'Bilan : le changement de N a cassé l\'ordre',text:`Quand N change, le résultat de <code>hash % N</code> change. Les anciens messages restent dans l'ancienne partition et les nouveaux vont dans une autre, lue en parallèle. Même effet sur le mécanisme de reprise : la DLQ indique <code>partition = 1</code> pour B2, ce qui correspondait à l'ancien calcul. Et un message en erreur dans P3 ou P4 ne pourrait aller ni dans la DLQ ni dans le topic de reprise : <b>les trois topics doivent toujours avoir le même nombre de partitions</b>.`,
+ run(m){done(m,'F3',2);done(m,'A3',0);m.cons[0].st='bad';m.cons[0].txt='⚠ ordre cassé pour D et E';m.cons[1].st='err';m.cons[1].txt='⏸ P1 bloquée : B2, E2, C3';m.cons[2].st='bad';m.cons[2].txt='⚠ ordre cassé pour B';}},
+{scene:3,title:'Procédure sûre : on recommence avant l\'agrandissement',text:`On revient au même état, avec 3 partitions et des messages en attente. Cette fois, on <b>met d'abord les producteurs en pause</b> : plus aucun nouveau message n'arrive.`,
+ run(m){resetTo(m,5);m.paused=true;}},
+{scene:3,title:'Vider : corriger et consommer tout ce qui reste',text:`B2 est lu dans la DLQ (D1), corrigé, puis traité sous le nom <b>B2′</b> via le topic de reprise (R1). D2 et F2 sont consommés. Le topic de reprise et la DLQ doivent aussi être <b>vides</b> avant d'agrandir.`,
+ run(m){m.t.B2c.op=0;const b=m.t.B2;b.label='B2′';b.st='fixed';m.lanes.P1='';m.t.E2.st='blocked';consume(m,'B2',1);consume(m,'D2',0);consume(m,'F2',2);}},
+{scene:3,title:'Le dernier message en attente est traité',text:`P1 est débloquée et E2 est traité. Il ne reste plus rien en attente.`,
+ run(m){done(m,'B2',1);done(m,'D2',0);done(m,'F2',2);m.t.E2.st='';consume(m,'E2',1);}},
+{scene:3,title:'Topics vides → on agrandit à 5 partitions',text:`Toutes les partitions sont vides et chaque groupe est entièrement traité. On peut maintenant passer à <b>5 partitions</b> sur les <b>trois topics</b> : principal, reprise et DLQ (voir en bas). Les groupes changent de partition, mais <b>aucun ancien message ne les attend ailleurs</b>.`,
+ run(m){done(m,'E2',1);for(let i=0;i<3;i++)m.lanes['P'+i]='empty';alter(m);m.sideN=5;m.cons.forEach(c=>{c.st='ok';c.txt='✓ partitions vides';});}},
+{scene:3,title:'Reprise de la production',text:`Les producteurs repartent. B3 va dans P2, D3 dans P4 et E3 dans P3, mais B2, D2 et E2 sont <b>déjà traités</b>. Il n'y a plus de conflit possible.`,
+ run(m){m.paused=false;m.banner=false;for(let i=0;i<5;i++)m.lanes['P'+i]=i>2?'new':'';produceNew(m);m.cons.forEach(c=>{c.st='';c.txt='En attente';});}},
+{scene:3,title:'Consommation : tout est dans l\'ordre',text:`A3, C3 et B3 sont consommés. Chaque groupe reprend juste après son dernier message traité.`,
+ run(m){m.lanes.P3='';m.lanes.P4='';consume(m,'A3',0);consume(m,'C3',1);consume(m,'B3',2);}},
+{scene:3,title:'Fin : FIFO respecté pour tous les groupes',text:`E3, D3 et F3 terminent. Le panneau du bas est entièrement vert ✓. <b>Vider avant d'agrandir</b> évite le problème, au prix d'une courte pause de la production.`,
+ run(m){done(m,'A3',0);done(m,'C3',1);done(m,'B3',2);consume(m,'E3',0,.3);consume(m,'D3',1,.3);consume(m,'F3',2,.3);}},
+{scene:3,title:'Récapitulatif',text:`Le code de routage reste le même, mais son résultat dépend du nombre de partitions. Pour grandir sans risque : prévoir assez de partitions dès le départ et ajouter des consommateurs, ou vider avant d'agrandir.`,
+ run(m){done(m,'E3',0);done(m,'D3',1);done(m,'F3',2);m.cons.forEach(c=>{c.st='ok';c.txt='✓ à jour';});m.summary=true;}},
+];
+
+/* ---------- Rendu ---------- */
+const stage=document.getElementById('stage');
+const tokLayer=document.getElementById('tokens'),ghostLayer=document.getElementById('ghosts');
+const tokEl={};
+function render(m){
+  for(const id in m.t){const t=m.t[id];let el=tokEl[id];
+    if(!el){el=document.createElement('div');tokLayer.appendChild(el);tokEl[id]=el;}
+    el.className='tok g-'+t.g+(t.st?' st-'+t.st:'');
+    const ico=t.st==='err'?'<span class="ico">⚠️</span>':t.st==='blocked'?'<span class="ico">🔒</span>':'';
+    el.innerHTML=t.label+ico+(t.sub?`<span class="sub">${t.sub}</span>`:'');
+    el.style.transitionDelay=(t.delay||0)+'s';
+    el.style.transform=`translate(${t.x-26}px,${t.y-17}px)`;
+    el.style.opacity=t.op;
+  }
+  ghostLayer.innerHTML=m.ghosts.map(g=>`<div class="ghost g-${g.g}" style="left:${g.x-26}px;top:${g.y-17}px">${g.label}</div>`).join('');
+  for(let i=0;i<5;i++){const id='P'+i,l=lanes[id],s=m.lanes[id]||'';
+    l.className='lane '+s+(i>=m.np?' hide':'');
+    l.querySelector('.badge').textContent=s==='susp'?'⛔ SUSPENDUE':s==='new'?'✚ NOUVELLE':s==='empty'?'✓ VIDE':'';
+    l.querySelector('.asg').textContent=m.assign[id]?'→ '+m.assign[id]:'';}
+  m.cons.forEach((c,i)=>{const el=consEl[i];el.className='cons '+c.st;el.querySelector('.stt').textContent=c.txt;el.querySelector('.as').textContent=c.as;});
+  document.getElementById('rt').classList.toggle('m5',m.mod5);
+  topic.classList.toggle('alter',m.banner);topic.querySelector('.banner').classList.toggle('on',m.banner);
+  document.getElementById('tsub').textContent=m.np+' partitions';
+  document.getElementById('nval').textContent='N = '+m.np;
+  prod.classList.toggle('paused',m.paused);
+  document.getElementById('ord').innerHTML='ABCDEF'.split('').map(g=>{const o=m.order[g];const ko=o.some(x=>x.bad);
+    return `<div><span class="g" style="color:var(--${g})">${g}</span><span class="seq">${o.map(x=>`<span class="${x.bad?'bad':''}">${x.l}${x.bad?' ⚠':''}</span>`).join('<i>→</i>')||'<i>—</i>'}</span><span class="res ${ko?'ko':o.length?'okk':''}">${ko?'⚠ ordre cassé':o.length?'✓ FIFO':''}</span></div>`;}).join('');
+  for(const k of ['rep','dlq']){const b=sideBoxes[k];
+    b.querySelectorAll('.cell').forEach(c=>{const i=+c.dataset.i;c.className='cell'+(i<3?'':m.sideN>=5?(m.np===5&&m.lanes['P'+i]==='new'?' new':''):(m.np===5&&m.sideWarn?' miss':' hide'));});
+    const st=b.querySelector('.sst');
+    if(m.sideN>=5){st.className='sst good';st.textContent='✓ 5 partitions, comme le topic principal';}
+    else if(m.np===5&&m.sideWarn){st.className='sst warn';st.textContent='⚠ toujours 3 partitions (≠ 5)';}
+    else{st.className='sst';st.textContent='3 partitions, même structure que le topic principal';}}
+  document.getElementById('summary').classList.toggle('on',m.summary);
+}
+
+let cur=0;
+function go(n){
+  n=Math.max(0,Math.min(steps.length-1,n));
+  const m=fresh();
+  for(let i=0;i<n;i++){for(const k in m.t)m.t[k].delay=0;steps[i].run(m);}
+  for(const k in m.t)m.t[k].delay=0;
+  stage.classList.add('noanim');render(m);void stage.offsetWidth;stage.classList.remove('noanim');
+  requestAnimationFrame(()=>{for(const k in m.t)m.t[k].delay=0;steps[n].run(m);render(m);});
+  cur=n;const s=steps[n];
+  const names={1:'Avant : 3 partitions',2:'Passage à 5 partitions (sans précaution)',3:'Procédure sûre'};
+  document.querySelector('#cap .meta').textContent=`Scène ${s.scene} · ${names[s.scene]} · Étape ${n+1} / ${steps.length}`;
+  document.querySelector('#cap .t').textContent=s.title;
+  document.querySelector('#cap .b').innerHTML=s.text;
+  document.getElementById('progbar').style.width=((n+1)/steps.length*100)+'%';
+  const starts=[0,6,12];
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',starts.indexOf(+t.dataset.go)+1===s.scene));
+}
+let timer=null;const bPlay=document.getElementById('bPlay');
+function stop(){clearTimeout(timer);timer=null;bPlay.textContent='▶';}
+function play(){bPlay.textContent='⏸';const tick=()=>{if(cur>=steps.length-1){stop();return;}go(cur+1);timer=setTimeout(tick,5500);};if(cur>=steps.length-1)go(0);timer=setTimeout(tick,600);}
+bPlay.onclick=()=>timer?stop():play();
+document.getElementById('bNext').onclick=()=>{stop();go(cur+1);};
+document.getElementById('bPrev').onclick=()=>{stop();go(cur-1);};
+document.getElementById('bRestart').onclick=()=>{stop();go(0);};
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{stop();go(+t.dataset.go);});
+document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){stop();go(cur+1);}else if(e.key==='ArrowLeft'){stop();go(cur-1);}else if(e.key===' '){e.preventDefault();timer?stop():play();}});
+function fit(){const w=document.getElementById('wrap');const s=Math.min(w.clientWidth/W,w.clientHeight/H);stage.style.transform=`scale(${s})`;stage.style.left=((w.clientWidth-W*s)/2)+'px';stage.style.top=((w.clientHeight-H*s)/2)+'px';}
+window.addEventListener('resize',fit);fit();go(0);
+</script>
+</body>
+</html>
