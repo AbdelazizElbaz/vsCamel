@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka — Reprise par la DLQ (retour dans le topic principal)</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d; --txt:#e6edf3; --mut:#8b949e;
+    --A:#3b82f6; --B:#10b981; --C:#f59e0b; --err:#ef4444; --rep:#a78bfa; --dlq:#f87171; --ok:#22c55e; --gold:#facc15;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:"Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{display:flex;align-items:center;gap:16px;padding:10px 20px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  header h1 span{color:var(--mut);font-weight:400}
+  .tabs{margin-left:auto;display:flex;gap:8px}
+  .tab{background:var(--panel);border:1px solid var(--line);color:var(--mut);padding:6px 12px;border-radius:999px;cursor:pointer;font-size:13px}
+  .tab.on{color:var(--txt);border-color:#58a6ff;background:#1f2a3a}
+  #wrap{flex:1 1 auto;position:relative;overflow:hidden}
+  #stage{position:absolute;left:0;top:0;width:1160px;height:720px;transform-origin:0 0}
+  #stage.noanim *{transition:none!important}
+  svg#edges{position:absolute;inset:0;width:1160px;height:720px;overflow:visible}
+  .edge{fill:none;stroke:#3a4250;stroke-width:2;transition:stroke .4s,stroke-width .4s,opacity .4s}
+  .edge.rep{stroke:#5b4a8a;stroke-dasharray:6 5}
+  .edge.dlq{stroke:#7a3434;stroke-dasharray:6 5}
+  .edge.fix{stroke:#2f6b3f;stroke-dasharray:6 5}
+  .edge.hl{stroke:#58a6ff;stroke-width:3.5;stroke-dasharray:8 6;animation:dash 1s linear infinite}
+  .edge.rep.hl{stroke:var(--rep)} .edge.dlq.hl{stroke:var(--dlq)} .edge.fix.hl{stroke:var(--ok)}
+  @keyframes dash{to{stroke-dashoffset:-28}}
+  .elabel{fill:var(--mut);font-size:11px}
+  .box{position:absolute;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+  .box .ttl{position:absolute;left:14px;top:8px;font-size:13px;font-weight:600;letter-spacing:.2px}
+  .box .ttl small{color:var(--mut);font-weight:400;margin-left:6px}
+  .topic-main{background:linear-gradient(180deg,#161b22,#131922)}
+  .topic-rep{border-color:#4c3f7a;background:linear-gradient(180deg,#1a1730,#151324)}
+  .topic-dlq{border-color:#6b2c2c;background:linear-gradient(180deg,#2a1515,#1d1212)}
+  .lane{position:absolute;border-radius:8px;background:#0f141b;border:1px dashed #2b333f;transition:background .5s,border-color .5s,box-shadow .5s}
+  .lane .pl{position:absolute;left:-40px;top:50%;transform:translateY(-50%);font-size:13px;font-weight:700;color:var(--mut)}
+  .lane .grp{position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--mut)}
+  .lane.susp{background:rgba(239,68,68,.12);border:1px solid var(--err);box-shadow:0 0 18px rgba(239,68,68,.35)}
+  .lane.hl{border:1px solid var(--rep);box-shadow:0 0 18px rgba(167,139,250,.4)}
+  .box.dlqon{border-color:var(--dlq)!important;box-shadow:0 0 18px rgba(248,113,113,.45)}
+  .lane.dlq{border:1px solid var(--dlq);box-shadow:0 0 18px rgba(248,113,113,.45);background:rgba(248,113,113,.08)}
+  .lane.resumed{border:1px solid var(--ok);box-shadow:0 0 14px rgba(34,197,94,.35)}
+  .badge{position:absolute;left:90px;top:-11px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--err);color:#fff;opacity:0;transition:opacity .4s}
+  .lane.susp .badge{opacity:1}
+  .lane.resumed .badge{opacity:1;background:var(--ok)}
+  .cg{border-color:#2d4a6b;background:linear-gradient(180deg,#121b27,#0f1620)}
+  .cons{position:absolute;left:20px;width:160px;height:120px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);transition:border-color .4s,box-shadow .4s}
+  .cons .nm{position:absolute;left:10px;top:6px;font-weight:700;font-size:14px}
+  .cons .as{position:absolute;right:10px;top:8px;font-size:10.5px;color:var(--mut)}
+  .cons .stt{position:absolute;left:10px;right:6px;top:26px;font-size:10px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cons .log{position:absolute;left:10px;right:6px;bottom:6px;font-size:10px;color:#c9d1d9;white-space:nowrap;overflow:hidden}
+  .cons .log b{color:var(--mut);font-weight:400}
+  .cons.busy{border-color:#58a6ff;box-shadow:0 0 14px rgba(88,166,255,.35)}
+  .cons.err,.cons.susp{border-color:var(--err);box-shadow:0 0 14px rgba(239,68,68,.4)}
+  .cons.err .stt,.cons.susp .stt{color:#fca5a5}
+  .cons.ok{border-color:#2f6b3f}
+  .cons.ok .stt{color:#86efac}
+  .cons.rep{border-color:var(--rep);box-shadow:0 0 14px rgba(167,139,250,.45)}
+  .cons.rep .stt{color:#c4b5fd}
+  .prod{border-color:#2d4a6b}
+  .op{border-color:#2f6b3f;background:linear-gradient(180deg,#12231a,#0f1a14)}
+  .reg{border-color:#4b4f2a;background:linear-gradient(180deg,#1f2014,#17180f)}
+  .reg ul{position:absolute;left:14px;right:10px;top:30px;margin:0;padding:0;list-style:none;font-size:11px;color:#e5e7b0}
+  .reg li{margin:2px 0;animation:pop .5s}
+  .reg .empty{color:var(--mut);font-style:italic}
+  .hash{position:absolute;left:25px;top:340px;width:180px;font-size:11.5px;text-align:center;padding:8px;border-radius:8px;background:#1f2a3a;border:1px solid #58a6ff;opacity:0;transition:opacity .5s}
+  .hash.on{opacity:1}
+  .hash code{color:#93c5fd}
+  .ord{position:absolute;left:14px;right:14px;top:30px;font-size:12px}
+  .ord div{display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #222a35;min-height:26px}
+  .ord .g{width:24px;font-weight:700}
+  .ord .seq{flex:1}
+  .ord .seq span{display:inline-block;padding:1px 6px;border-radius:5px;background:#0f141b;border:1px solid #2b333f;font-size:11.5px;animation:pop .5s}
+  .ord .seq span.bad{border-color:var(--err);background:rgba(239,68,68,.18);color:#fecaca}
+  .ord .seq i{color:var(--mut);font-style:normal;margin:0 3px}
+  .ord .res{font-size:11px;font-weight:700;white-space:nowrap}
+  .ord .res.ko{color:#fca5a5} .ord .res.okk{color:#86efac}
+  .lane.hlp{border:1px solid var(--ok);box-shadow:0 0 18px rgba(34,197,94,.4)}
+  .tok{position:absolute;left:0;top:0;width:52px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff;
+       transition:transform .9s cubic-bezier(.5,.05,.25,1),opacity .6s,background .4s,box-shadow .4s,border-color .4s;border:2px solid rgba(255,255,255,.25);z-index:5;box-shadow:0 4px 10px rgba(0,0,0,.4)}
+  .tok.g-A{background:var(--A)} .tok.g-B{background:var(--B)} .tok.g-C{background:var(--C)}
+  .tok.st-err{border-color:#fff;background:var(--err)!important;box-shadow:0 0 0 4px rgba(239,68,68,.35),0 0 22px rgba(239,68,68,.7);animation:shake .5s 1s 2}
+  .tok.st-copy{background:#7f1d1d!important;border:2px dashed #fca5a5}
+  .tok.st-fixing{background:#7f1d1d!important;border:2px dashed #fca5a5;animation:pulse 1s infinite}
+  .tok.st-fixed{background:var(--B)!important;border:2px solid var(--gold);box-shadow:0 0 18px rgba(250,204,21,.6)}
+  .tok.st-skip{background:#374151!important;color:#9ca3af;text-decoration:line-through;border:2px dashed #6b7280}
+  .tok .sub{position:absolute;top:36px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:10px;font-weight:600;color:#fca5a5}
+  .tok .ico{position:absolute;right:-10px;top:-10px;font-size:15px}
+  @keyframes shake{0%,100%{margin-left:0}25%{margin-left:-5px}75%{margin-left:5px}}
+  @keyframes pulse{50%{box-shadow:0 0 0 6px rgba(250,204,21,.35)}}
+  @keyframes pop{from{opacity:0;transform:scale(.8)}to{opacity:1;transform:none}}
+  .ghost{position:absolute;width:52px;height:34px;border-radius:8px;border:1.5px dashed;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;opacity:.45;animation:pop .6s}
+  .ghost.g-A{border-color:var(--A);color:var(--A)} .ghost.g-B{border-color:var(--B);color:var(--B)} .ghost.g-C{border-color:var(--C);color:var(--C)}
+  .ghost.skip{text-decoration:line-through;border-color:#6b7280;color:#9ca3af}
+  .ghost::after{content:"✓ commit";position:absolute;bottom:-14px;font-size:8.5px;color:var(--mut);text-decoration:none}
+  #summary{position:absolute;inset:40px 120px;background:rgba(13,17,23,.96);border:1px solid #58a6ff;border-radius:16px;padding:26px 34px;z-index:20;opacity:0;pointer-events:none;transition:opacity .6s;overflow:auto}
+  #summary.on{opacity:1;pointer-events:auto}
+  #summary h2{margin:0 0 6px;font-size:22px}
+  #summary .cols{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:14px}
+  #summary h3{margin:0 0 8px;font-size:15px}
+  #summary ul{margin:0;padding-left:18px;font-size:13.5px;line-height:1.55;color:#c9d1d9}
+  #summary .fifo{margin-top:16px;padding:10px 14px;border-radius:10px;background:#12231a;border:1px solid #2f6b3f;font-size:14px}
+  #summary .close{position:absolute;right:14px;top:10px;background:none;border:none;color:var(--mut);font-size:20px;cursor:pointer}
+  footer{flex:0 0 auto;border-top:1px solid var(--line);background:var(--panel);padding:12px 20px;display:flex;gap:20px;align-items:stretch}
+  #cap{flex:1;min-height:92px}
+  #cap .meta{font-size:12px;color:var(--mut);margin-bottom:4px}
+  #cap .t{font-size:16px;font-weight:700;margin-bottom:4px}
+  #cap .b{font-size:14px;line-height:1.5;color:#c9d1d9}
+  #cap code{background:#0d1117;border:1px solid var(--line);padding:0 5px;border-radius:5px;color:#93c5fd;font-size:12.5px}
+  .ctrl{display:flex;flex-direction:column;gap:8px;justify-content:center;min-width:250px}
+  .btns{display:flex;gap:6px}
+  .btns button{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 0;font-size:15px;cursor:pointer}
+  .btns button:hover{border-color:#58a6ff}
+  .btns button.main{background:#1f6feb;border-color:#1f6feb}
+  .prog{height:6px;background:#0d1117;border-radius:3px;overflow:hidden}
+  .prog i{display:block;height:100%;background:linear-gradient(90deg,#1f6feb,#a78bfa);transition:width .4s}
+  .hint{font-size:11px;color:var(--mut);text-align:center}
+  .legend{position:absolute;left:25px;top:440px;width:180px;font-size:11.5px;color:var(--mut);line-height:1.8}
+  .legend i{display:inline-block;width:14px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+</style>
+</head>
+<body>
+<header>
+  <h1>Kafka — Reprise par la DLQ <span>· DLQ puis retour dans le topic principal</span></h1>
+  <div class="tabs">
+    <button class="tab" data-go="0">① Fonctionnement normal</button>
+    <button class="tab" data-go="3">② Erreur : on ne bloque pas</button>
+  </div>
+</header>
+
+<div id="wrap"><div id="stage">
+  <svg id="edges"></svg>
+  <div id="boxes"></div>
+  <div id="ghosts"></div>
+  <div id="tokens"></div>
+  <div id="summary">
+    <button class="close" onclick="document.getElementById('summary').classList.remove('on')">✕</button>
+    <h2>Reprise par la DLQ : récapitulatif</h2>
+    <div style="color:var(--mut);font-size:13.5px">En cas d'erreur, le message part dans la DLQ et la consommation continue. Une fois corrigé, il revient dans le topic principal, à la fin de la file.</div>
+    <div class="cols">
+      <div>
+        <h3 style="color:#86efac">Avantages</h3>
+        <ul>
+          <li><b>Aucune partition bloquée</b> : les messages suivants continuent d'être traités.</li>
+          <li><b>Plus simple</b> : pas de topic de reprise, pas de registre des messages déjà traités.</li>
+          <li>Le message corrigé revient avec la même clé, donc <b>dans la même partition</b> (P1), automatiquement.</li>
+        </ul>
+      </div>
+      <div>
+        <h3 style="color:#fca5a5">Limites</h3>
+        <ul>
+          <li>M5′ est ajouté <b>à la fin de la file</b>, derrière les messages arrivés pendant la correction.</li>
+          <li>Risque d'<b>écraser un état plus récent</b> : si M5′ et M14 concernent la même donnée, M5′ peut annuler l'effet de M14. Il faut un contrôle de version ou d'horodatage côté consommateur.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="fifo" style="background:#1f2a3a;border-color:#2d4a6b">Messages traités dans P1 : <b>M2 → M8 → M11 → M14 → M5′</b>.</div>
+    <div style="margin-top:12px;font-size:13px;color:#c9d1d9"><b>Quand l'utiliser ?</b> Quand les messages sont <b>indépendants</b> les uns des autres, ou quand le consommateur sait ignorer un message plus ancien que l'état actuel. </div>
+  </div>
+</div></div>
+
+<footer>
+  <div id="cap"><div class="meta"></div><div class="t"></div><div class="b"></div></div>
+  <div class="ctrl">
+    <div class="btns">
+      <button id="bRestart" title="Recommencer">⏮</button>
+      <button id="bPrev" title="Étape précédente">◀</button>
+      <button id="bPlay" class="main" title="Lecture automatique">▶</button>
+      <button id="bNext" title="Étape suivante">▶▶</button>
+    </div>
+    <div class="prog"><i id="progbar"></i></div>
+    <div class="hint">← → pour naviguer · Espace pour lecture/pause</div>
+  </div>
+</footer>
+
+<script>
+const W=1160,H=720;
+const PY=[138,208,278], RY=[425,475,525], CY=[150,300,450];
+const GRP={A:0,B:1,C:2};
+const slotM=(p,k)=>({x:740-k*62,y:PY[p]});
+const slotR=(p,k)=>({x:740-k*62,y:RY[p]});
+const consPos=i=>({x:1005,y:CY[i]+4});
+const PROD={x:115,y:250};
+const DY=[425,475,525];
+const dlqSlot=(p,k)=>({x:522,y:470});
+const OPER={x:455,y:668};
+
+/* ---------- Décor statique ---------- */
+const boxes=document.getElementById('boxes');
+function box(cls,x,y,w,h,html){const d=document.createElement('div');d.className='box '+cls;Object.assign(d.style,{left:x+'px',top:y+'px',width:w+'px',height:h+'px'});d.innerHTML=html||'';boxes.appendChild(d);return d;}
+box('prod',25,170,180,160,'<div class="ttl">📤 Producteur</div><div style="position:absolute;left:14px;right:10px;top:34px;font-size:11.5px;color:var(--mut);line-height:1.5">Publie les messages<br>répartis sur les partitions<br>selon leur <b style="color:#e6edf3">clé</b></div>');
+
+const leg=document.createElement('div');leg.className='legend';leg.style.top='360px';leg.innerHTML='<i style="background:var(--A)"></i>Message de P0<br><i style="background:var(--B)"></i>Message de P1<br><i style="background:var(--C)"></i>Message de P2<br><i style="background:var(--err)"></i>Message en erreur<br><i style="background:var(--B);outline:2px solid var(--gold)"></i>Message corrigé';boxes.appendChild(leg);
+
+box('topic-main',245,70,555,245,'<div class="ttl">Topic principal <small>commandes · 3 partitions</small></div>');
+const dlqBox=box('topic-dlq',245,400,555,130,'<div class="ttl" style="color:#fca5a5">Topic DLQ <small>dead letter queue</small></div>');
+box('op',245,595,280,115,'<div class="ttl" style="color:#86efac">👤 Utilisateur / support</div><div style="position:absolute;left:14px;top:32px;font-size:10.5px;color:var(--mut);line-height:1.6">lit dans la DLQ<br>corrige<br>republie dans le<br><b style="color:#86efac">topic principal</b></div>');
+box('ordbox',545,595,560,115,'<div class="ttl">Messages traités par partition</div><div class="ord" id="ord"></div>');
+box('cg',905,45,200,515,'<div class="ttl" style="color:#93c5fd">Instances consommatrices</div><div style="position:absolute;left:14px;top:27px;font-size:10px;color:var(--mut)">un seul topic consommé : le principal</div>');
+
+const lanes={};
+function lane(id,x,y,w,h,label,grp){const d=document.createElement('div');d.className='lane';Object.assign(d.style,{left:x+'px',top:y+'px',width:w+'px',height:h+'px'});d.innerHTML=`<span class="pl">${label}</span><span class="grp">${grp||''}</span><span class="badge"></span>`;boxes.appendChild(d);lanes[id]=d;}
+['A','B','C'].forEach((g,i)=>lane('P'+i,300,PY[i]-24,490,48,'P'+i,''));
+const consEl=[];
+for(let i=0;i<3;i++){const d=document.createElement('div');d.className='cons';d.style.left='925px';d.style.top=(CY[i]-60)+'px';d.innerHTML=`<div class="nm">C${i+1}</div><div class="as">P${i}</div><div class="stt"></div><div class="log"></div>`;boxes.appendChild(d);consEl.push(d);}
+
+/* ---------- Flèches ---------- */
+const svg=document.getElementById('edges');
+const edgeDefs=[
+  ['e-prod0','M205 250 C 250 250, 260 '+PY[0]+', 300 '+PY[0],''],
+  ['e-prod1','M205 250 C 250 250, 260 '+PY[1]+', 300 '+PY[1],''],
+  ['e-prod2','M205 250 C 250 250, 260 '+PY[2]+', 300 '+PY[2],''],
+  ...[0,1,2].map(i=>['e-mc'+i,`M790 ${PY[i]} C 860 ${PY[i]}, 870 ${CY[i]-25}, 925 ${CY[i]-25}`,'']),
+  ['e-dlq','M245 '+(PY[1]+10)+' C 226 270, 226 430, 243 465','dlq'],
+  ['e-op','M455 530 L 455 594','dlq'],
+  ['e-back','M245 650 C 212 620, 212 250, 243 '+(PY[1]-8),'fix'],
+];
+let svgh='<defs>';
+['#3a4250','#58a6ff'].forEach((c,i)=>svgh+=`<marker id="m${i}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="${c}"/></marker>`);
+svgh+='</defs>';
+edgeDefs.forEach(([id,d,c])=>svgh+=`<path id="${id}" class="edge ${c}" d="${d}" marker-end="url(#m0)"/>`);
+svgh+=`<text class="elabel" x="240" y="420" transform="rotate(-90 240 420)" fill="#f87171">copie → DLQ</text>`;
+svgh+=`<text class="elabel" x="222" y="640" transform="rotate(-90 222 640)" fill="#86efac">republie dans P1 (en fin de file)</text>`;
+svg.innerHTML=svgh;
+
+/* ---------- Modèle ---------- */
+function fresh(){
+  const t={};
+  for(const g of 'ABC') for(let n=1;n<=5;n++){const id=g+n;t[id]={id,g,n,label:'M'+((n-1)*3+GRP[g]+1),x:PROD.x,y:PROD.y,op:0,st:'',home:slotM(GRP[g],n-1)};}
+  const h=slotM(1,1);
+  t.B2c={id:'B2c',g:'B',n:2,label:'M5',x:h.x,y:h.y,op:0,st:'copy',home:h};
+  return {t,cons:[0,1,2].map(()=>({st:'',txt:'En attente',log:[]})),lanes:{},ghosts:[],hl:[],hash:false,summary:false,
+    order:{A:[],B:[],C:[]},proc:{A:[],B:[],C:[]}};
+}
+function consume(m,id,i,delay=0){const t=m.t[id];const p=consPos(i);Object.assign(t,{x:p.x,y:p.y,op:1,st:t.st==='fixed'?'fixed':(t.st==='err'?'err':'proc'),delay});m.cons[i].st='busy';m.cons[i].txt='Traite '+t.label+'…';}
+function done(m,id,i,ghostCls=''){
+  const t=m.t[id];t.op=0;t.st=t.st==='fixed'?'fixed':'done';m.ghosts.push({x:t.home.x,y:t.home.y,g:t.g,label:t.label,cls:ghostCls});
+  if(ghostCls)return;
+  m.cons[i].log.push(t.label);
+  const n=t.n,pr=m.proc[t.g];let bad=false;
+  for(let j=1;j<n;j++)if(!pr.includes(j))bad=true;
+  if(pr.length&&n<Math.max(...pr))bad=true;
+  pr.push(n);m.order[t.g].push({l:t.label,bad});
+}
+const HLC=['e-mc0','e-mc1','e-mc2'];
+
+/* ---------- Scénario ---------- */
+const steps=[
+{scene:1,title:'Architecture : reprise par la DLQ',text:`Les messages sont répartis sur 3 partitions selon leur clé. Chaque instance consommatrice lit une partition. Il n'y a <b>pas de topic de reprise</b> : seulement le topic principal et un topic <b>DLQ</b>. Le principe : <b>on ne bloque jamais la consommation</b>.`,
+ run(m){m.hl=HLC.slice();}},
+{scene:1,title:'Production des messages',text:`Le producteur publie M1 à M12. Chaque message va dans la partition donnée par sa clé.`,
+ run(m){m.hash=true;m.hl=['e-prod0','e-prod1','e-prod2'];let i=0;for(let n=1;n<=4;n++)for(const g of 'ABC'){const t=m.t[g+n];Object.assign(t,{x:t.home.x,y:t.home.y,op:1,delay:i++*0.18});}}},
+{scene:1,title:'Consommation normale',text:`Chaque instance lit sa partition offset par offset. Le panneau du bas liste les messages traités dans chaque partition.`,
+ run(m){m.hl=HLC;consume(m,'A1',0);consume(m,'B1',1);consume(m,'C1',2);}},
+{scene:2,title:'Erreur sur le message M5',text:`C2 échoue sur <b>M5</b>, dans la partition P1. Ici, on <b>ne suspend pas</b> la partition.`,
+ run(m){m.hl=HLC;done(m,'A1',0);done(m,'B1',1);done(m,'C1',2);consume(m,'A2',0,.3);consume(m,'B2',1,.3);consume(m,'C2',2,.3);m.t.B2.st='err';m.cons[1].st='err';m.cons[1].txt='❌ Échec du traitement de B2';}},
+{scene:2,title:'M5 part dans la DLQ et la partition continue',text:`Une copie de M5 est publiée dans le <b>topic DLQ</b>, avec sa partition et son offset d'origine. L'offset de M5 est <b>commité</b> : le message sort du flux. C2 passe <b>directement à M8</b>, sans attendre la correction.`,
+ run(m){m.hl=['e-dlq','e-mc1'];const c=m.t.B2c;const p=dlqSlot(1,0);m.dlqOn=true;Object.assign(c,{x:p.x,y:p.y,op:1,sub:'origine : P1 · offset 1'});done(m,'B2',1,'skip');done(m,'A2',0);done(m,'C2',2);consume(m,'A3',0,.5);consume(m,'B3',1,.5);consume(m,'C3',2,.5);}},
+{scene:2,title:'La partition P1 avance sans M5',text:`M8 est traité pendant que M5 attend sa correction dans la DLQ. M11 suit. <b>Rien n'est bloqué.</b>`,
+ run(m){m.hl=HLC;done(m,'A3',0);done(m,'B3',1);done(m,'C3',2);consume(m,'A4',0,.3);consume(m,'B4',1,.3);consume(m,'C4',2,.3);}},
+{scene:2,title:'Un utilisateur corrige M5 depuis la DLQ',text:`L'utilisateur lit M5 dans la DLQ, analyse l'erreur et corrige le message. Pendant ce temps, toutes les partitions sont à jour.`,
+ run(m){m.hl=['e-op'];done(m,'A4',0);done(m,'B4',1);done(m,'C4',2);const c=m.t.B2c;m.dlqOn=false;Object.assign(c,{x:OPER.x,y:OPER.y,st:'fixing',sub:'🔧 lu depuis la DLQ'});m.cons.forEach((x,i)=>{x.st='ok';x.txt='✓ P'+i+' à jour';});}},
+{scene:2,title:'M5′ est corrigé, et la production continue',text:`M5 est corrigé et devient <b>M5′</b>. Pendant la correction, de nouveaux messages sont arrivés : M13, M14 et M15. <b>M14 est déjà dans P1.</b>`,
+ run(m){m.hl=['e-prod0','e-prod1','e-prod2'];const c=m.t.B2c;Object.assign(c,{label:'M5′',st:'fixed',sub:'✓ corrigé'});let i=0;for(const g of 'ABC'){const t=m.t[g+5];Object.assign(t,{x:t.home.x,y:t.home.y,op:1,delay:i++*0.2});}m.cons.forEach(x=>{x.st='';x.txt='En attente';});}},
+{scene:2,title:'Republication dans le topic principal, en fin de file',text:`M5′ est republié dans le <b>topic principal</b>. Avec la même clé, il va dans la <b>même partition, P1</b>. Mais il est ajouté <b>à la fin de la file, derrière M14</b>.`,
+ run(m){m.hl=['e-back'];m.lanes.P1='hlp';const c=m.t.B2c;const p=slotM(1,5);Object.assign(c,{x:p.x,y:p.y,sub:'',home:p});}},
+{scene:2,title:'M14 passe avant M5′',text:`La consommation continue : M13, M14 et M15 sont traités. <b>M14 passe avant M5′</b>.`,
+ run(m){m.hl=HLC;m.lanes.P1='';consume(m,'A5',0);consume(m,'B5',1);consume(m,'C5',2);}},
+{scene:2,title:'M5′ est enfin traité, en dernier',text:`C2 arrive à M5′ et le traite avec succès. Aucun registre n'est nécessaire : l'original M5 a été commité et ne sera jamais relu.`,
+ run(m){m.hl=['e-mc1'];done(m,'A5',0);done(m,'B5',1);done(m,'C5',2);consume(m,'B2c',1,.3);m.cons[0].st='ok';m.cons[0].txt='✓ P0 à jour';m.cons[2].st='ok';m.cons[2].txt='✓ P2 à jour';}},
+{scene:2,title:'Récapitulatif',text:`Messages traités dans P1 : <b>M2 → M8 → M11 → M14 → M5′</b>. Rien n'a été bloqué, mais M5′ est traité après des messages arrivés plus tard.`,
+ run(m){m.hl=[];done(m,'B2c',1);m.cons[1].st='ok';m.cons[1].txt='✓ P1 à jour';m.summary=true;}},
+];
+
+/* ---------- Rendu ---------- */
+const stage=document.getElementById('stage');
+const tokLayer=document.getElementById('tokens'),ghostLayer=document.getElementById('ghosts');
+const tokEl={};
+function render(m){
+  for(const id in m.t){const t=m.t[id];let el=tokEl[id];
+    if(!el){el=document.createElement('div');tokLayer.appendChild(el);tokEl[id]=el;}
+    el.className='tok g-'+t.g+(t.st?' st-'+t.st:'');
+    const ico=t.st==='err'?'<span class="ico">⚠️</span>':t.st==='skip'?'<span class="ico">⏭️</span>':'';
+    el.innerHTML=t.label+ico+(t.sub?`<span class="sub">${t.sub}</span>`:'');
+    el.style.transitionDelay=(t.delay||0)+'s';
+    el.style.transform=`translate(${t.x-26}px,${t.y-17}px)`;
+    el.style.opacity=t.op;
+  }
+  ghostLayer.innerHTML=m.ghosts.map(g=>`<div class="ghost g-${g.g} ${g.cls}" style="left:${g.x-26}px;top:${g.y-17}px">${g.label}</div>`).join('');
+  for(const id in lanes){const s=m.lanes[id]||'';lanes[id].className='lane '+s;lanes[id].querySelector('.badge').textContent=s==='susp'?'⛔ SUSPENDUE':s==='resumed'?'▶ REPRISE':'';}
+  m.cons.forEach((c,i)=>{const el=consEl[i];el.className='cons '+c.st;el.querySelector('.stt').textContent=c.txt;el.querySelector('.log').innerHTML='<b>Traités :</b> '+(c.log.join('→')||'—');});
+  document.getElementById('ord').innerHTML='ABC'.split('').map(g=>{const o=m.order[g];const ko=o.some(x=>x.bad);
+    return `<div><span class="g" style="color:var(--${g})">P${'ABC'.indexOf(g)}</span><span class="seq">${o.map(x=>`<span>${x.l}</span>`).join('<i>→</i>')||'<i>—</i>'}</span></div>`;}).join('');
+  svg.querySelectorAll('.edge').forEach(e=>e.classList.toggle('hl',m.hl.includes(e.id)));
+  dlqBox.classList.toggle('dlqon',!!m.dlqOn);
+  document.getElementById('summary').classList.toggle('on',m.summary);
+}
+
+let cur=0;
+function go(n){
+  n=Math.max(0,Math.min(steps.length-1,n));
+  const m=fresh();
+  for(let i=0;i<n;i++){for(const k in m.t)m.t[k].delay=0;steps[i].run(m);}
+  for(const k in m.t)m.t[k].delay=0;
+  stage.classList.add('noanim');render(m);void stage.offsetWidth;stage.classList.remove('noanim');
+  requestAnimationFrame(()=>{for(const k in m.t)m.t[k].delay=0;steps[n].run(m);render(m);});
+  cur=n;
+  const s=steps[n];
+  document.querySelector('#cap .meta').textContent=`Scène ${s.scene} · Étape ${n+1} / ${steps.length}`;
+  document.querySelector('#cap .t').textContent=s.title;
+  document.querySelector('#cap .b').innerHTML=s.text;
+  document.getElementById('progbar').style.width=((n+1)/steps.length*100)+'%';
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',(+t.dataset.go===0&&s.scene===1)||(+t.dataset.go===3&&s.scene===2)));
+}
+
+/* ---------- Contrôles ---------- */
+let timer=null;
+const bPlay=document.getElementById('bPlay');
+function stop(){clearTimeout(timer);timer=null;bPlay.textContent='▶';}
+function play(){bPlay.textContent='⏸';const tick=()=>{if(cur>=steps.length-1){stop();return;}go(cur+1);timer=setTimeout(tick,5200);};if(cur>=steps.length-1)go(0);timer=setTimeout(tick,600);}
+bPlay.onclick=()=>timer?stop():play();
+document.getElementById('bNext').onclick=()=>{stop();go(cur+1);};
+document.getElementById('bPrev').onclick=()=>{stop();go(cur-1);};
+document.getElementById('bRestart').onclick=()=>{stop();go(0);};
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{stop();go(+t.dataset.go);});
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight'){stop();go(cur+1);}
+  else if(e.key==='ArrowLeft'){stop();go(cur-1);}
+  else if(e.key===' '){e.preventDefault();timer?stop():play();}
+});
+function fit(){const w=document.getElementById('wrap');const s=Math.min(w.clientWidth/W,w.clientHeight/H);stage.style.transform=`scale(${s})`;stage.style.left=((w.clientWidth-W*s)/2)+'px';stage.style.top=((w.clientHeight-H*s)/2)+'px';}
+window.addEventListener('resize',fit);fit();
+go(0);
+</script>
+</body>
+</html>
