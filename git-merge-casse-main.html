@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Réagir quand un merge casse main</title>
+<style>
+  :root{
+    --bg:#ffffff; --panel:#f6f8fa; --line:#d0d7de; --txt:#1f2328; --mut:#57606a;
+    --main:#1f6feb; --ok:#15803d; --err:#dc2626; --warn:#b45309; --purple:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:"Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{display:flex;align-items:center;gap:14px;padding:10px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  header h1 span{color:var(--mut);font-weight:400}
+  .tabs{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+  .tab{background:var(--panel);border:1px solid var(--line);color:var(--mut);padding:5px 10px;border-radius:999px;cursor:pointer;font-size:12px}
+  .tab.on{color:var(--txt);border-color:var(--main);background:#e8f1ff}
+  #wrap{flex:1 1 auto;position:relative;overflow:hidden}
+  #stage{position:absolute;left:0;top:0;width:1160px;height:640px;transform-origin:0 0}
+  #stage.noanim *{transition:none!important;animation:none!important}
+  .panel{position:absolute;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .panel .ttl{position:absolute;left:14px;top:8px;font-size:13px;font-weight:600}
+  .panel .ttl small{color:var(--mut);font-weight:400;margin-left:6px}
+  .panel .leg{position:absolute;right:14px;bottom:8px;font-size:11px;color:var(--mut)}
+  svg#g{position:absolute;left:0;top:0;width:1160px;height:640px;overflow:visible;pointer-events:none}
+  #pan{transition:transform .9s ease}
+  .guide{stroke:#e3e8ee;stroke-width:1.5;stroke-dasharray:3 5}
+  .seg{fill:none;stroke-width:4;stroke-linecap:round}
+  .seg.dash{stroke-dasharray:7 6;stroke-width:3}
+  .seg.new{stroke-dasharray:600;stroke-dashoffset:600;animation:draw 1s ease forwards}
+  .seg.dash.new{stroke-dasharray:7 6;stroke-dashoffset:0;animation:fadein 1s ease}
+  @keyframes draw{to{stroke-dashoffset:0}}
+  @keyframes fadein{from{opacity:0}to{opacity:1}}
+  .node circle{stroke:#fff;stroke-width:3}
+  .node text{font-size:10.5px;fill:var(--mut);text-anchor:middle}
+  .node.new{animation:pop .5s .5s both}
+  .node.hl circle.ring{animation:ring 1.4s infinite}
+  @keyframes ring{0%{r:9;opacity:.8}100%{r:20;opacity:0}}
+  @keyframes pop{from{opacity:0;transform:scale(.3)}to{opacity:1;transform:none}}
+  .node{transform-box:fill-box;transform-origin:center}
+  .tagp{font-size:10px;font-weight:700}
+  .tagp.new{animation:fadein .6s .7s both}
+  .lanelbl{position:absolute;left:24px;width:165px;font-size:12px;font-weight:700;line-height:1.15;transition:opacity .4s}
+  .lanelbl small{display:block;font-weight:500;font-size:10.5px;color:var(--mut)}
+  .lanelbl.dim{opacity:.4}
+  .lanelbl .iso{display:inline-block;margin-left:6px;font-size:9.5px;padding:1px 6px;border-radius:999px;background:#15803d;color:#fff;vertical-align:1px;opacity:0;transition:opacity .4s}
+  .lanelbl.isoprod .iso{opacity:1}
+  .env{position:absolute;top:350px;height:210px;border-radius:12px;border:1px solid var(--line);background:#fff;transition:border-color .4s,box-shadow .4s,background .4s}
+  .env .nm{position:absolute;left:14px;top:9px;font-weight:700;font-size:14px}
+  .env .sub{position:absolute;left:14px;top:29px;font-size:10.5px;color:var(--mut)}
+  .env .ver{position:absolute;left:14px;top:52px;font-family:Consolas,monospace;font-size:13px;font-weight:700;padding:4px 10px;border-radius:8px;background:#eef2f7;border:1px solid var(--line);max-width:250px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .env .src{position:absolute;left:14px;top:86px;right:8px;font-size:11.5px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .env .st{position:absolute;left:14px;top:106px;right:8px;font-size:11.5px;font-weight:700}
+  .env .lines{position:absolute;left:14px;right:8px;top:128px;font-size:10.5px;color:var(--mut);line-height:1.55;font-family:Consolas,monospace}
+  .env .hd{position:absolute;right:10px;top:9px;font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--purple);color:#fff;display:none}
+  .env.deploy{border-color:var(--main);box-shadow:0 0 0 3px rgba(31,111,235,.15),0 0 20px rgba(31,111,235,.25)}
+  .env.deploy .st{color:var(--main)}
+  .env.ok .st{color:var(--ok)}
+  .env.lock{border-color:var(--purple);background:#faf7ff;box-shadow:0 0 0 3px rgba(124,58,237,.15),0 0 20px rgba(124,58,237,.25)}
+  .env.lock .st{color:var(--purple)}
+  .env.incident{border-color:var(--err);background:#fff5f5;box-shadow:0 0 0 3px rgba(220,38,38,.15)}
+  .env.incident .st{color:var(--err)}
+  .env.rollback{border-color:#d97706;background:#fffbeb;box-shadow:0 0 0 3px rgba(217,119,6,.15)}
+  .env.rollback .st{color:var(--warn)}
+  .env.empty .ver{opacity:.35}
+  .env.empty .st{color:var(--mut)}
+  .pipe{position:absolute;left:15px;top:572px;width:1130px;height:60px;border-radius:12px;border:1px solid var(--line);background:var(--panel)}
+  .pipe .lbl{position:absolute;left:14px;top:7px;font-size:12px;font-weight:700}
+  .chips{position:absolute;left:14px;top:27px;display:flex;gap:4px;align-items:center}
+  .chip{font-size:10.5px;padding:3px 7px;border-radius:999px;border:1px solid var(--line);background:#fff;color:#9aa4b2;transition:all .35s;white-space:nowrap}
+  .chip.on{background:var(--main);border-color:var(--main);color:#fff;box-shadow:0 0 10px rgba(31,111,235,.35)}
+  .chip.gate.on{background:#7c3aed;border-color:#7c3aed}
+  .chip.lockc.on{background:#6d28d9;border-color:#6d28d9}
+  .chips i{color:#c3ccd6;font-style:normal;font-size:10px}
+  .ptxt{position:absolute;left:112px;top:7px;font-size:11.5px;color:var(--mut);white-space:nowrap}
+  .flytok{position:absolute;left:0;top:0;padding:4px 9px;border-radius:8px;background:var(--main);color:#fff;font:700 11.5px Consolas,monospace;z-index:30;box-shadow:0 4px 12px rgba(0,0,0,.25);pointer-events:none;white-space:nowrap}
+  #summary{position:absolute;inset:14px 30px;background:rgba(255,255,255,.98);border:1px solid var(--main);border-radius:16px;padding:18px 26px;z-index:40;opacity:0;pointer-events:none;transition:opacity .6s;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.18)}
+  #summary.on{opacity:1;pointer-events:auto}
+  #summary h2{margin:0 0 4px;font-size:20px}
+  #summary .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-top:10px}
+  #summary h3{margin:0 0 6px;font-size:14px}
+  #summary ul{margin:0;padding-left:17px;font-size:12px;line-height:1.48;color:#333a42}
+  #summary code{background:#f6f8fa;border:1px solid var(--line);padding:0 4px;border-radius:4px;font-size:11px;color:#1d4ed8}
+  #summary .no{margin-top:10px;padding:8px 14px;border-radius:10px;background:#fef2f2;border:1px solid #f1aeae;font-size:12px}
+  #summary .close{position:absolute;right:14px;top:10px;background:none;border:none;color:var(--mut);font-size:20px;cursor:pointer}
+  footer{border-top:1px solid var(--line);background:var(--panel);padding:12px 20px;display:flex;gap:20px}
+  #cap{flex:1;min-height:100px}
+  #cap .meta{font-size:12px;color:var(--mut);margin-bottom:4px}
+  #cap .t{font-size:16px;font-weight:700;margin-bottom:4px}
+  #cap .b{font-size:13.5px;line-height:1.5;color:#333a42}
+  #cap code{background:#fff;border:1px solid var(--line);padding:0 5px;border-radius:5px;color:#1d4ed8;font-size:12px}
+  .ctrl{display:flex;flex-direction:column;gap:8px;justify-content:center;min-width:250px}
+  .btns{display:flex;gap:6px}
+  .btns button{flex:1;background:#fff;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 0;font-size:15px;cursor:pointer}
+  .btns button:hover{border-color:var(--main)}
+  .btns button.main{background:var(--main);border-color:var(--main);color:#fff}
+  .prog{height:6px;background:#e5e9ef;border-radius:3px;overflow:hidden}
+  .prog i{display:block;height:100%;background:linear-gradient(90deg,#1f6feb,#7c3aed);transition:width .4s}
+  .hint{font-size:11px;color:var(--mut);text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>Un merge casse main <span>· comment réagir (revert, rollback, nouvelle version)</span></h1>
+  <div class="tabs" id="tabs"></div>
+</header>
+<div id="wrap"><div id="stage">
+  <div class="panel" style="left:15px;top:10px;width:1130px;height:328px"><div class="ttl">Dépôt Git <small>main doit toujours rester sain · on rétablit d'abord, on comprend ensuite</small></div>
+    <div class="leg"><span style="color:#7c3aed">▭ -rc.N = candidat</span> &nbsp;·&nbsp; <span style="color:#15803d">▭ vX.Y.Z = allé en prod</span></div></div>
+  <svg id="g"></svg>
+  <div id="lanes"></div>
+  <div id="envs"></div>
+  <div class="pipe"><div class="lbl">Pipeline</div><div class="ptxt" id="ptxt"></div><div class="chips" id="chips"></div></div>
+  <div id="fly"></div>
+  <div id="summary">
+    <button class="close" onclick="document.getElementById('summary').classList.remove('on')">✕</button>
+    <h2>Récapitulatif : quand un merge casse main</h2>
+    <div style="color:var(--mut);font-size:12.5px">Main = prochaine version de prod : un main rouge bloque tout le monde et ne peut plus être livré. Le but est de <b>retrouver un main sain le plus vite possible</b>, sans réécrire l'historique.</div>
+    <div class="grid">
+      <div>
+        <h3 style="color:#dc2626">Réagir, dans l'ordre</h3>
+        <ul>
+          <li><b>Geler</b> les merges dans main, <b>prévenir</b> l'équipe.</li>
+          <li><b>Ne rien réparer à chaud</b> dans l'environnement : Git reste la référence.</li>
+          <li><b>Décider en 15 à 30 minutes</b> : revert par défaut.</li>
+          <li><b>Revert</b> par PR express (<code>git revert</code>), CI verte, <b>priorité sur le verrou DEV</b>.</li>
+          <li><b>Dégeler</b> quand main est vert en DEV.</li>
+          <li><b>Réintroduire</b> corrigé, depuis une branche à jour, avec un test qui reproduit la panne.</li>
+        </ul>
+      </div>
+      <div>
+        <h3 style="color:var(--purple)">Revert ou fix-forward ?</h3>
+        <ul>
+          <li><b>Revert</b> : cause pas évidente, plusieurs équipes bloquées, ou main en route vers QUALITÉ.</li>
+          <li><b>Fix-forward</b> : seulement si cause évidente, correctif trivial et CI verte. Même flux qu'un revert, main reste rouge pendant ce temps.</li>
+          <li><b>Selon l'endroit</b> : DEV, revert ; QUALITÉ, revert et nouveau rc (l'ancien est rejeté, gardé dans Git) ; PROD, <b>rollback par l'image d'abord</b>, puis revert et nouvelle version.</li>
+          <li>Un tag n'est <b>jamais déplacé ni réutilisé</b>.</li>
+        </ul>
+      </div>
+      <div>
+        <h3 style="color:var(--ok)">Prévenir</h3>
+        <ul>
+          <li><b>File de merge</b> (merge queue) : tester main + la branche ensemble <b>avant</b> le merge.</li>
+          <li>Branche <b>à jour depuis main</b> avant le verrou DEV, et verrou de courte durée.</li>
+          <li>Gros changement : <b>feature flag</b> désactivé par défaut, ou découpage.</li>
+          <li>Compatibilité des messages Kafka entre versions (rollback possible).</li>
+          <li><b>Post-mortem sans blâme</b> : on ajoute le test manquant à chaque incident.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="no">⛔ <b>À éviter :</b> laisser main rouge · empiler des merges dessus · corriger à chaud dans l'environnement · reset ou push forcé sur main · supprimer, déplacer ou réutiliser un tag rc · remerger l'ancienne branche sans repartir de main à jour.</div>
+  </div>
+</div></div>
+<footer>
+  <div id="cap"><div class="meta"></div><div class="t"></div><div class="b"></div></div>
+  <div class="ctrl">
+    <div class="btns">
+      <button id="bRestart" title="Recommencer">⏮</button>
+      <button id="bPrev" title="Étape précédente">◀</button>
+      <button id="bPlay" class="main" title="Lecture automatique">▶</button>
+      <button id="bNext" title="Étape suivante">▶▶</button>
+    </div>
+    <div class="prog"><i id="progbar"></i></div>
+    <div class="hint">← → pour naviguer · Espace pour lecture/pause</div>
+  </div>
+</footer>
+
+<script>
+const W=1160,H=640;
+const Y={rel:85,main:150,feat:215,hot:275};
+const C={rel:'#7c3aed',main:'#1f6feb',feat:'#059669',hot:'#dc2626'};
+const NS='http://www.w3.org/2000/svg';
+
+/* ---------- Éléments du graphe Git ---------- */
+const EL={};
+function S(id,x1,l1,x2,l2,c,dash){EL[id]={t:'seg',x1,y1:Y[l1],x2,y2:Y[l2],c:C[c||l2],dash};}
+function N(id,x,l,label,c){EL[id]={t:'node',x,y:Y[l],label,c:c||C[l]};}
+function T(id,x,l,text,color,idx=0){EL[id]={t:'tag',x,y:Y[l]-22-idx*20,text,c:color};}
+const RC='#7c3aed',FIN='#15803d';
+// tronc
+const SL='#475569';
+N('c0',230,'main','m5');S('sm0',230,'main',290,'main');N('c1',290,'main','m6');T('t140',290,'main','v1.4.0',FIN);
+// F-107 validée puis mergée : main plante
+S('sf0',290,'main',340,'feat');N('f1',340,'feat','f1');S('sf1',340,'feat',390,'feat');N('f2',390,'feat','test DEV OK');
+S('smg',390,'feat',450,'main','feat');S('sm1',290,'main',450,'main');N('m7',450,'main','m7');N('m7x',450,'main','','#dc2626');T('tbad',450,'main','❌ DEV KO','#dc2626');
+T('tfreeze',450,'main','🧊 main gelé','#b45309',1);
+// revert
+S('shr',450,'main',500,'hot');N('r1',500,'hot','revert m7');S('smgr',500,'hot',560,'main','hot');S('sm2',450,'main',560,'main');N('m8',560,'main','m8');T('trv',560,'main','↩ revert m7',SL);
+// réintroduction corrigée
+S('sg0',560,'main',620,'feat');N('g1',620,'feat','réintroduit');S('sg1',620,'feat',670,'feat');N('g2',670,'feat','fix + test','#059669');
+S('smg2',670,'feat',740,'main','feat');S('sm3',560,'main',740,'main');N('m9',740,'main','m9');
+// bug plus tard : QUALITÉ puis PROD
+S('sm4',740,'main',790,'main');N('m10',790,'main','m10');T('trc1',790,'main','v1.5.0-rc.1',RC);
+S('sm5',790,'main',890,'main');N('m11',890,'main','m11');T('trv2',890,'main','↩ revert m10',SL);T('trc2',890,'main','v1.5.0-rc.2',RC,1);T('t150',890,'main','v1.5.0',FIN,2);
+S('sm6',890,'main',990,'main');N('m12',990,'main','m12');T('trv3',990,'main','↩ revert',SL);T('trc3',990,'main','v1.5.1-rc.1',RC,1);T('t151',990,'main','v1.5.1',FIN,2);
+
+const svg=document.getElementById('g');
+svg.innerHTML=`<defs><clipPath id="cp"><rect x="195" y="0" width="965" height="640"></rect></clipPath></defs><g clip-path="url(#cp)"><g id="pan"><g id="guides"></g><g id="segs"></g><g id="tags"></g><g id="nodes"></g></g></g>`;
+const panG=svg.querySelector("#pan");
+const gg=svg.querySelector('#guides');
+for(const l in Y){const ln=document.createElementNS(NS,'line');ln.setAttribute('class','guide');ln.setAttribute('x1',200);ln.setAttribute('x2',2200);ln.setAttribute('y1',Y[l]);ln.setAttribute('y2',Y[l]);gg.appendChild(ln);}
+const segG=svg.querySelector('#segs'),nodeG=svg.querySelector('#nodes'),tagG=svg.querySelector('#tags');
+const elDom={};
+function mk(id,anim){
+  const e=EL[id];let el;
+  if(e.t==='seg'){el=document.createElementNS(NS,'path');
+    const k=Math.min(35,Math.abs(e.x2-e.x1)/2);
+    const d=e.y1===e.y2?`M${e.x1} ${e.y1} L${e.x2} ${e.y2}`:`M${e.x1} ${e.y1} C${e.x1+k} ${e.y1}, ${e.x2-k} ${e.y2}, ${e.x2} ${e.y2}`;
+    el.setAttribute('d',d);el.setAttribute('stroke',e.c);el.setAttribute('class','seg'+(e.dash?' dash':'')+(anim?' new':''));segG.appendChild(el);}
+  else if(e.t==='node'){el=document.createElementNS(NS,'g');el.setAttribute('class','node'+(anim?' new':''));
+    el.innerHTML=`<circle class="ring" cx="${e.x}" cy="${e.y}" r="9" fill="none" stroke="${e.c}" stroke-width="2" opacity="0"></circle><circle cx="${e.x}" cy="${e.y}" r="8" fill="${e.c}"></circle>`+(e.label?`<text x="${e.x}" y="${e.y+21}">${e.label}</text>`:'');nodeG.appendChild(el);}
+  else{el=document.createElementNS(NS,'g');el.setAttribute('class','tagp'+(anim?' new':''));
+    const w=e.text.length*5.8+14,x0=e.x+6-w;
+    el.innerHTML=`<rect x="${x0}" y="${e.y-9}" width="${w}" height="18" rx="9" fill="#fff" stroke="${e.c}" stroke-width="1.5"></rect><text x="${x0+w/2}" y="${e.y+3.5}" text-anchor="middle" fill="${e.c}">${e.text}</text>`;tagG.appendChild(el);}
+  elDom[id]=el;
+}
+
+/* ---------- Libellés des branches ---------- */
+const LANES={rel:'release/x.y',main:'main',feat:'feature/* · bugfix/*',hot:'hotfix/*'};
+const laneDom={};
+for(const l in Y){const d=document.createElement('div');d.className='lanelbl';d.style.top=(Y[l]-12)+'px';d.style.color=C[l];
+  d.innerHTML=`<span class="nm">${LANES[l]}</span><span class="iso">= PROD</span><small></small>`;document.getElementById('lanes').appendChild(d);laneDom[l]=d;}
+
+/* ---------- Environnements ---------- */
+const ENVS=[['sbx','🧪 Sandbox','namespace éphémère · optionnelle',15,'#059669'],['dev','DEV','main · verrou pour valider une branche',300,'#1f6feb'],['qa','QUALITÉ','tags candidats -rc.N',585,'#7c3aed'],['prod','PROD','tags finaux après approbation',870,'#15803d']];
+const envDom={},ENVC={};
+ENVS.forEach(([k,nm,sub,x,c])=>{const d=document.createElement('div');d.className='env';d.style.left=x+'px';d.style.width='275px';
+  d.innerHTML=`<div class="nm" style="color:${c}">${nm}</div><div class="hd"></div><div class="sub">${sub}</div><div class="ver"></div><div class="src"></div><div class="st"></div><div class="lines"></div>`;
+  document.getElementById('envs').appendChild(d);envDom[k]=d;ENVC[k]={x:x+137,y:455};});
+
+/* ---------- Pipeline ---------- */
+const CHIPS=['Build','Tests','Sandbox','Réserver DEV','Test DEV','Revue','Merge','DEV auto','Tag rc','QUALITÉ','Approbation','Tag final','PROD'];
+const GATES=['Revue','Approbation'];
+document.getElementById('chips').innerHTML=CHIPS.map((c,i)=>`<span class="chip${GATES.includes(c)?' gate':''}${c==='Réserver DEV'?' lockc':''}" data-c="${c}">${GATES.includes(c)?'🔒 ':c==='Réserver DEV'?'🔐 ':''}${c}</span>`+(i<CHIPS.length-1?'<i>›</i>':'')).join('');
+
+/* ---------- Modèle ---------- */
+function fresh(){
+  return {els:['c0','sm0','c1','t140'],hl:'c1',iso:'main',
+    lane:{rel:{sub:'inutile dans ce scénario',dim:true},main:{sub:'prochaine version de prod',dim:false},feat:{sub:'',dim:true},hot:{sub:'',dim:true}},
+    env:{sbx:{ver:'—',src:'Optionnelle : tests de développement',st:'empty',stt:'',lines:[],badge:''},
+         dev:{ver:'app:main-m6',src:'main (m6)',st:'ok',stt:'✓ à jour',lines:[],badge:''},
+         qa:{ver:'app:1.4.0',src:'tag v1.4.0',st:'ok',stt:'✓ validée',lines:[],badge:''},
+         prod:{ver:'app:1.4.0',src:'tag v1.4.0',st:'ok',stt:'✓ en service',lines:[],badge:''}},
+    pipe:{on:[],txt:''},fly:[],summary:false,pan:0};
+}
+const add=(m,...ids)=>ids.forEach(i=>{if(!m.els.includes(i))m.els.push(i);});
+const E=(m,k,o)=>{Object.assign(m.env[k],o);};
+const SBX=n=>({ver:'app:pr-'+n,src:'PR #'+n+' · namespace sbx-pr-'+n,st:'deploy',stt:'▶ tests de développement',lines:[`topics : sbx-pr-${n}.*`,`groups : *-sbx-pr-${n}`,`backends : API / WCF de DEV`],badge:''});
+const SBX0=()=>({ver:'—',src:'Namespace et topics supprimés',st:'empty',stt:'',lines:[],badge:''});
+const LOCK=(br,img,stt)=>({ver:'app:'+img,src:'branche '+br,st:'lock',stt:stt||'▶ validation avant le merge',lines:[`réservé par : ${br}`,`branche mise à jour depuis main`,`expire dans 4 h (sinon retour à main)`],badge:'🔒 RÉSERVÉ'});
+const DEVMAIN=(sha,stt,st,lines)=>({ver:'app:main-'+sha,src:'main ('+sha+')',st:st||'deploy',stt:stt||'▶ déployé automatiquement',lines:lines||[],badge:''});
+
+const steps=[
+/* 0 */{sc:'Détection',title:'La branche a passé son test, elle est mergée… et main plante en DEV',text:`<code>feature/F-107</code> a réussi son test sous verrou et vient d'être mergée dans main (m7). Mais le <b>déploiement automatique de main en DEV échoue</b> (pod en erreur, consumer Kafka qui plante). Causes fréquentes : un autre merge est arrivé entre-temps, deux changements incompatibles ensemble, une configuration ou des données différentes, un cas non couvert par le test. À cet instant, <b>main n'est plus sain</b> : il ne peut plus partir en prod.`,
+ run(m){add(m,'sf0','f1','sf1','f2','smg','sm1','m7','m7x','tbad');m.hl='m7';m.iso=null;m.lane.feat={sub:'feature/F-107 (mergée)',dim:false};E(m,'dev',{ver:'app:main-m7',src:'main (m7)',st:'incident',stt:'❌ déploiement automatique en échec',lines:['pod en CrashLoopBackOff','erreur Kafka au démarrage'],badge:''});m.pipe={on:['Revue','Merge','DEV auto'],txt:'merge → déploiement automatique de main en DEV : échec'};m.fly=[['pipe','dev','app:main-m7']];}},
+/* 1 */{sc:'Détection',title:'Premier réflexe : geler main, prévenir, puis décider vite',text:`<b>1. Geler</b> les merges dans main (protection de branche ou statut requis) : on n'empile rien sur un main rouge. <b>2. Prévenir</b> l'équipe (canal dédié, auteur de F-107). <b>3. Ne rien réparer à chaud dans DEV</b> : l'environnement doit refléter Git. <b>4. Décider en 15 à 30 minutes</b> : <b>revert</b> par défaut. Le <b>fix-forward</b> (correctif en avant) n'est acceptable que si la cause est évidente, le correctif trivial et la CI verte. Règle : on rétablit d'abord, on comprend ensuite.`,
+ run(m){add(m,'tfreeze');m.hl='m7';m.iso=null;m.lane.feat={sub:'feature/F-107 (mergée)',dim:false};E(m,'dev',{ver:'app:main-m7',src:'main (m7)',st:'incident',stt:'❌ main rouge',lines:['merges gelés','équipe prévenue','ne pas corriger à la main dans DEV'],badge:''});m.pipe={on:[],txt:'gel des merges, décision : revert (défaut) ou fix-forward (trivial)'};}},
+/* 2 */{sc:'Revert',title:'Revert immédiat : une PR express, prioritaire sur le verrou DEV',text:`Avec le squash merge, la feature est un seul commit : <code>git revert m7</code> crée un nouveau commit qui l'annule, <b>l'historique est conservé</b> (jamais de reset ni de push forcé sur main). La PR de revert passe en <b>revue express</b>, CI verte, avec <b>priorité sur le verrou DEV</b> comme un hotfix. Main est redéployé en DEV : s'il redevient vert, main est de nouveau sain et on <b>dégèle</b> les merges.`,
+ run(m){add(m,'shr','r1','smgr','sm2','m8','trv');m.els=m.els.filter(i=>i!=='tfreeze');m.hl='m8';m.iso=null;m.lane.feat={sub:'feature/F-107 (annulée)',dim:true};m.lane.hot={name:'revert/*',color:'#dc2626',sub:'revert/F-107',dim:false};E(m,'dev',DEVMAIN('m8','✓ main de nouveau sain','ok',['F-107 annulée','merges dégelés']));m.pipe={on:['Revue','Merge','DEV auto'],txt:'revert express → main redéployé en DEV : vert'};m.fly=[['pipe','dev','app:main-m8']];}},
+/* 3 */{sc:'Revert',title:'On réintroduit la feature, corrigée, avec un test qui reproduit la panne',text:`Une fois main sain, le développeur repart <b>d'une branche à jour depuis main</b> (qui contient le revert). Il rétablit le code (<code>git revert</code> du revert, ou cherry-pick), puis ajoute <b>le correctif et un test qui reproduit la panne</b>. Nouvelle validation en DEV sous verrou, <b>branche à jour</b>, puis merge. On n'oublie pas de comprendre la cause : le test qui manquait est ajouté, pour que l'incident ne revienne pas.`,
+ run(m){add(m,'sg0','g1','sg1','g2','smg2','sm3','m9');m.hl='m9';m.iso=null;m.lane.feat={sub:'feature/F-107 (corrigée, remergée)',dim:false};m.lane.hot={name:'revert/*',color:'#dc2626',sub:'revert/F-107',dim:true};E(m,'dev',DEVMAIN('m9','✓ stable','ok',['F-107 de retour, corrigée','nouveau test de non-régression']));m.pipe={on:['Réserver DEV','Test DEV','Revue','Merge','DEV auto'],txt:'validation sous verrou, merge, main vert'};m.fly=[['pipe','dev','app:main-m9']];}},
+/* 4 */{sc:'Plus tard',title:'Et si le bug n\'est vu qu\'en QUALITÉ ? Revert, puis nouveau candidat',text:`Un autre merge (m10) est parti en QUALITÉ avec <code>v1.5.0-rc.1</code>, mais la recette trouve un bug. Même réflexe : <b>revert dans main</b> (m11), puis le pipeline crée <code>v1.5.0-rc.2</code>. Le tag <b>rc.1 reste dans Git</b> comme trace, marqué « rejeté » : on ne le supprime pas, on ne le déplace pas, on ne le réutilise pas. La <b>PROD n'a jamais été touchée</b>.`,
+ run(m){add(m,'sm4','m10','trc1','sm5','m11','trv2','trc2');m.hl='m11';m.iso=null;m.lane.hot={name:'revert/*',color:'#dc2626',sub:'',dim:true};m.lane.feat={sub:'',dim:true};E(m,'dev',DEVMAIN('m11','✓ main sain',null,['m10 annulée']));E(m,'qa',{ver:'app:1.5.0-rc.2',src:'tag v1.5.0-rc.2 · commit m11',st:'deploy',stt:'▶ rc.1 rejeté, rc.2 en recette',lines:['rc.1 conservé dans Git (journal)'],badge:''});E(m,'prod',{ver:'app:1.4.0',src:'tag v1.4.0',st:'ok',stt:'✓ en service',lines:['jamais touchée'],badge:''});m.pipe={on:['Revue','Merge','DEV auto','Tag rc','QUALITÉ'],txt:'revert, nouveau tag rc.2, recette'};m.fly=[['pipe','dev','app:main-m11'],['pipe','qa','1.5.0-rc.2']];}},
+/* 5 */{sc:'Plus tard',title:'Et si le bug n\'est vu qu\'en PROD ? D\'abord rollback par l\'image',text:`<code>v1.5.0</code> est approuvée et déployée en PROD, puis un bug apparaît. Premier réflexe : <b>rollback</b>, c'est-à-dire redéployer l'image précédente (<code>helm rollback</code> ou Argo CD), en quelques minutes, <b>sans toucher à Git</b> et sans recompiler. Les utilisateurs sont protégés avant même de chercher la cause. Les messages Kafka écrits par la version fautive doivent rester lisibles par la version précédente : c'est la contrainte de compatibilité à vérifier.`,
+ run(m){add(m,'t150');m.hl='m11';m.iso=null;E(m,'dev',DEVMAIN('m11','✓ main sain',null,[]));E(m,'qa',{ver:'app:1.5.0-rc.2',src:'tag v1.5.0-rc.2',st:'ok',stt:'✓ validée',lines:[],badge:''});E(m,'prod',{ver:'app:1.4.0',src:'image précédente (registre)',st:'rollback',stt:'↩ rollback : v1.5.0 → v1.4.0',lines:['aucun changement dans Git','la correction suit ensuite'],badge:''});m.pipe={on:['PROD'],txt:'rollback = redéploiement de l\'image précédente'};m.fly=[['pipe','prod','app:1.4.0']];}},
+/* 6 */{sc:'Plus tard',title:'Puis on corrige dans main : revert, nouvelle version v1.5.1',text:`Le correctif suit le <b>flux hotfix accéléré</b> : revert du commit fautif (ou fix-forward s'il est trivial) dans main, verrou DEV prioritaire, <code>v1.5.1-rc.1</code> en QUALITÉ, approbation, tag <code>v1.5.1</code>, déploiement de la même image. Le tag <code>v1.5.0</code> <b>ne bouge pas</b> et reste dans l'historique : la correction sort sous un <b>nouveau numéro</b>.`,
+ run(m){add(m,'t150','sm6','m12','trv3','trc3','t151');m.hl='m12';m.iso='main';E(m,'dev',DEVMAIN('m12','✓ main sain','ok',['bug de v1.5.0 annulé']));E(m,'qa',{ver:'app:1.5.1-rc.1',src:'tag v1.5.1-rc.1',st:'ok',stt:'✓ validée',lines:[],badge:''});E(m,'prod',{ver:'app:1.5.1',src:'tag v1.5.1 · commit m12',st:'deploy',stt:'▶ correction déployée',lines:['v1.5.0 jamais déplacée'],badge:''});m.pipe={on:['Revue','Merge','DEV auto','Tag rc','QUALITÉ','Approbation','Tag final','PROD'],txt:'flux hotfix accéléré jusqu\'à v1.5.1'};m.fly=[['qa','prod','app:1.5.1']];}},
+/* 7 */{sc:'Récap',title:'Récapitulatif',text:`Rétablir d'abord, comprendre ensuite : geler, prévenir, revert par PR express, dégeler, puis réintroduire corrigé avec un test. En QUALITÉ, nouveau rc ; en PROD, rollback par l'image puis nouvelle version.`,
+ run(m){m.hl=null;m.summary=true;}},
+];
+
+/* ---------- Rendu ---------- */
+const stage=document.getElementById('stage');
+function render(m,anim){
+  for(const id in elDom)if(!m.els.includes(id)){elDom[id].remove();delete elDom[id];}
+  m.els.forEach(id=>{if(!elDom[id])mk(id,anim);});
+  for(const id in elDom){const e=EL[id];if(e.t==='node')elDom[id].classList.toggle('hl',id===m.hl);}
+  for(const l in laneDom){const d=laneDom[l],s=m.lane[l];d.classList.toggle('dim',s.dim);d.classList.toggle('isoprod',m.iso===l);d.querySelector('small').textContent=s.sub;d.querySelector('.nm').textContent=s.name||LANES[l];d.style.color=s.color||C[l];}
+  panG.style.transform=`translateX(${m.pan||0}px)`;
+  for(const k in envDom){const d=envDom[k],e=m.env[k];d.className='env '+e.st;d.querySelector('.ver').textContent=e.ver;d.querySelector('.src').textContent=e.src;d.querySelector('.st').textContent=e.stt;d.querySelector('.lines').innerHTML=e.lines.map(x=>x.replace(/</g,'&lt;')).join('<br>');
+    const hd=d.querySelector('.hd');hd.textContent=e.badge||'';hd.style.display=e.badge?'block':'none';}
+  document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',m.pipe.on.includes(c.dataset.c)));
+  document.getElementById('ptxt').textContent=m.pipe.txt?'→ '+m.pipe.txt:'';
+  document.getElementById('summary').classList.toggle('on',m.summary);
+  if(anim){const fl=document.getElementById('fly');fl.innerHTML='';
+    m.fly.forEach(([a,b,label],i)=>{const t=document.createElement('div');t.className='flytok';t.textContent=label;fl.appendChild(t);
+      const p=a==='pipe'?{x:580,y:575}:ENVC[a],q=ENVC[b];
+      t.animate([{transform:`translate(${p.x-45}px,${p.y-12}px)`,opacity:0},{opacity:1,offset:.15},{transform:`translate(${q.x-45}px,${q.y-12}px)`,opacity:1,offset:.85},{transform:`translate(${q.x-45}px,${q.y-12}px)`,opacity:0}],{duration:1500,delay:300+i*500,easing:'ease-in-out',fill:'both'});});}
+}
+
+const scenes=[...new Set(steps.map(s=>s.sc))];
+document.getElementById('tabs').innerHTML=scenes.map((s,i)=>`<button class="tab" data-sc="${s}">${i+1}. ${s}</button>`).join('');
+let cur=0;
+function go(n){
+  n=Math.max(0,Math.min(steps.length-1,n));
+  const m=fresh();
+  for(let i=0;i<n;i++){m.fly=[];steps[i].run(m);}
+  m.fly=[];
+  stage.classList.add('noanim');document.getElementById('fly').innerHTML='';render(m,false);void stage.offsetWidth;stage.classList.remove('noanim');
+  requestAnimationFrame(()=>{m.fly=[];steps[n].run(m);render(m,true);});
+  cur=n;const s=steps[n];
+  document.querySelector('#cap .meta').textContent=`Scénario : ${s.sc} · Étape ${n+1} / ${steps.length}`;
+  document.querySelector('#cap .t').textContent=s.title;
+  document.querySelector('#cap .b').innerHTML=s.text;
+  document.getElementById('progbar').style.width=((n+1)/steps.length*100)+'%';
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.sc===s.sc));
+}
+let timer=null;const bPlay=document.getElementById('bPlay');
+function stop(){clearTimeout(timer);timer=null;bPlay.textContent='▶';}
+function play(){bPlay.textContent='⏸';const tick=()=>{if(cur>=steps.length-1){stop();return;}go(cur+1);timer=setTimeout(tick,7000);};if(cur>=steps.length-1)go(0);timer=setTimeout(tick,600);}
+bPlay.onclick=()=>timer?stop():play();
+document.getElementById('bNext').onclick=()=>{stop();go(cur+1);};
+document.getElementById('bPrev').onclick=()=>{stop();go(cur-1);};
+document.getElementById('bRestart').onclick=()=>{stop();go(0);};
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{stop();go(steps.findIndex(s=>s.sc===t.dataset.sc));});
+document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){stop();go(cur+1);}else if(e.key==='ArrowLeft'){stop();go(cur-1);}else if(e.key===' '){e.preventDefault();timer?stop():play();}});
+function fit(){const w=document.getElementById('wrap');const s=Math.min(w.clientWidth/W,w.clientHeight/H);stage.style.transform=`scale(${s})`;stage.style.left=((w.clientWidth-W*s)/2)+'px';stage.style.top=((w.clientHeight-H*s)/2)+'px';}
+window.addEventListener('resize',fit);fit();go(0);
+</script>
+</body>
+</html>
