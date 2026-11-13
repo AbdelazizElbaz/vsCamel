@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stratégie de branches Git — plateforme d'intégration Kubernetes / Kafka</title>
+<style>
+  :root{
+    --bg:#ffffff; --panel:#f6f8fa; --line:#d0d7de; --txt:#1f2328; --mut:#57606a;
+    --main:#1f6feb; --ok:#15803d; --err:#dc2626; --warn:#b45309; --purple:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:"Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{display:flex;align-items:center;gap:14px;padding:10px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  header h1 span{color:var(--mut);font-weight:400}
+  .tabs{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+  .tab{background:var(--panel);border:1px solid var(--line);color:var(--mut);padding:5px 10px;border-radius:999px;cursor:pointer;font-size:12px}
+  .tab.on{color:var(--txt);border-color:var(--main);background:#e8f1ff}
+  #wrap{flex:1 1 auto;position:relative;overflow:hidden}
+  #stage{position:absolute;left:0;top:0;width:1160px;height:640px;transform-origin:0 0}
+  #stage.noanim *{transition:none!important;animation:none!important}
+  .panel{position:absolute;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .panel .ttl{position:absolute;left:14px;top:8px;font-size:13px;font-weight:600}
+  .panel .ttl small{color:var(--mut);font-weight:400;margin-left:6px}
+  .panel .leg{position:absolute;right:14px;bottom:8px;font-size:11px;color:var(--mut)}
+  svg#g{position:absolute;left:0;top:0;width:1160px;height:640px;overflow:visible;pointer-events:none}
+  .guide{stroke:#e3e8ee;stroke-width:1.5;stroke-dasharray:3 5}
+  .seg{fill:none;stroke-width:4;stroke-linecap:round}
+  .seg.dash{stroke-dasharray:7 6;stroke-width:3}
+  .seg.new{stroke-dasharray:600;stroke-dashoffset:600;animation:draw 1s ease forwards}
+  .seg.dash.new{stroke-dasharray:7 6;stroke-dashoffset:0;animation:fadein 1s ease}
+  @keyframes draw{to{stroke-dashoffset:0}}
+  @keyframes fadein{from{opacity:0}to{opacity:1}}
+  .node circle{stroke:#fff;stroke-width:3}
+  .node text{font-size:10.5px;fill:var(--mut);text-anchor:middle}
+  .node.new{animation:pop .5s .5s both}
+  .node.hl circle.ring{animation:ring 1.4s infinite}
+  @keyframes ring{0%{r:9;opacity:.8}100%{r:20;opacity:0}}
+  @keyframes pop{from{opacity:0;transform:scale(.3)}to{opacity:1;transform:none}}
+  .node{transform-box:fill-box;transform-origin:center}
+  .tagp{font-size:10px;font-weight:700}
+  .tagp.new{animation:fadein .6s .7s both}
+  .lanelbl{position:absolute;left:24px;width:165px;font-size:12px;font-weight:700;line-height:1.15;transition:opacity .4s}
+  .lanelbl small{display:block;font-weight:500;font-size:10.5px;color:var(--mut)}
+  .lanelbl.dim{opacity:.4}
+  .lanelbl .iso{display:inline-block;margin-left:6px;font-size:9.5px;padding:1px 6px;border-radius:999px;background:#15803d;color:#fff;vertical-align:1px;opacity:0;transition:opacity .4s}
+  .lanelbl.isoprod .iso{opacity:1}
+  .env{position:absolute;top:350px;height:210px;border-radius:12px;border:1px solid var(--line);background:#fff;transition:border-color .4s,box-shadow .4s,background .4s}
+  .env .nm{position:absolute;left:14px;top:9px;font-weight:700;font-size:14px}
+  .env .sub{position:absolute;left:14px;top:29px;font-size:10.5px;color:var(--mut)}
+  .env .ver{position:absolute;left:14px;top:52px;font-family:Consolas,monospace;font-size:13px;font-weight:700;padding:4px 10px;border-radius:8px;background:#eef2f7;border:1px solid var(--line);max-width:250px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .env .src{position:absolute;left:14px;top:86px;right:8px;font-size:11.5px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .env .st{position:absolute;left:14px;top:106px;right:8px;font-size:11.5px;font-weight:700}
+  .env .lines{position:absolute;left:14px;right:8px;top:128px;font-size:10.5px;color:var(--mut);line-height:1.55;font-family:Consolas,monospace}
+  .env .hd{position:absolute;right:10px;top:9px;font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--purple);color:#fff;display:none}
+  .env.deploy{border-color:var(--main);box-shadow:0 0 0 3px rgba(31,111,235,.15),0 0 20px rgba(31,111,235,.25)}
+  .env.deploy .st{color:var(--main)}
+  .env.ok .st{color:var(--ok)}
+  .env.lock{border-color:var(--purple);background:#faf7ff;box-shadow:0 0 0 3px rgba(124,58,237,.15),0 0 20px rgba(124,58,237,.25)}
+  .env.lock .st{color:var(--purple)}
+  .env.incident{border-color:var(--err);background:#fff5f5;box-shadow:0 0 0 3px rgba(220,38,38,.15)}
+  .env.incident .st{color:var(--err)}
+  .env.rollback{border-color:#d97706;background:#fffbeb;box-shadow:0 0 0 3px rgba(217,119,6,.15)}
+  .env.rollback .st{color:var(--warn)}
+  .env.empty .ver{opacity:.35}
+  .env.empty .st{color:var(--mut)}
+  .pipe{position:absolute;left:15px;top:572px;width:1130px;height:60px;border-radius:12px;border:1px solid var(--line);background:var(--panel)}
+  .pipe .lbl{position:absolute;left:14px;top:7px;font-size:12px;font-weight:700}
+  .chips{position:absolute;left:14px;top:27px;display:flex;gap:4px;align-items:center}
+  .chip{font-size:10.5px;padding:3px 7px;border-radius:999px;border:1px solid var(--line);background:#fff;color:#9aa4b2;transition:all .35s;white-space:nowrap}
+  .chip.on{background:var(--main);border-color:var(--main);color:#fff;box-shadow:0 0 10px rgba(31,111,235,.35)}
+  .chip.gate.on{background:#7c3aed;border-color:#7c3aed}
+  .chip.lockc.on{background:#6d28d9;border-color:#6d28d9}
+  .chips i{color:#c3ccd6;font-style:normal;font-size:10px}
+  .ptxt{position:absolute;left:112px;top:7px;font-size:11.5px;color:var(--mut);white-space:nowrap}
+  .flytok{position:absolute;left:0;top:0;padding:4px 9px;border-radius:8px;background:var(--main);color:#fff;font:700 11.5px Consolas,monospace;z-index:30;box-shadow:0 4px 12px rgba(0,0,0,.25);pointer-events:none;white-space:nowrap}
+  #summary{position:absolute;inset:14px 30px;background:rgba(255,255,255,.98);border:1px solid var(--main);border-radius:16px;padding:18px 26px;z-index:40;opacity:0;pointer-events:none;transition:opacity .6s;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.18)}
+  #summary.on{opacity:1;pointer-events:auto}
+  #summary h2{margin:0 0 4px;font-size:20px}
+  #summary .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-top:10px}
+  #summary h3{margin:0 0 6px;font-size:14px}
+  #summary ul{margin:0;padding-left:17px;font-size:12px;line-height:1.48;color:#333a42}
+  #summary code{background:#f6f8fa;border:1px solid var(--line);padding:0 4px;border-radius:4px;font-size:11px;color:#1d4ed8}
+  #summary .no{margin-top:10px;padding:8px 14px;border-radius:10px;background:#fef2f2;border:1px solid #f1aeae;font-size:12px}
+  #summary .close{position:absolute;right:14px;top:10px;background:none;border:none;color:var(--mut);font-size:20px;cursor:pointer}
+  footer{border-top:1px solid var(--line);background:var(--panel);padding:12px 20px;display:flex;gap:20px}
+  #cap{flex:1;min-height:100px}
+  #cap .meta{font-size:12px;color:var(--mut);margin-bottom:4px}
+  #cap .t{font-size:16px;font-weight:700;margin-bottom:4px}
+  #cap .b{font-size:13.5px;line-height:1.5;color:#333a42}
+  #cap code{background:#fff;border:1px solid var(--line);padding:0 5px;border-radius:5px;color:#1d4ed8;font-size:12px}
+  .ctrl{display:flex;flex-direction:column;gap:8px;justify-content:center;min-width:250px}
+  .btns{display:flex;gap:6px}
+  .btns button{flex:1;background:#fff;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 0;font-size:15px;cursor:pointer}
+  .btns button:hover{border-color:var(--main)}
+  .btns button.main{background:var(--main);border-color:var(--main);color:#fff}
+  .prog{height:6px;background:#e5e9ef;border-radius:3px;overflow:hidden}
+  .prog i{display:block;height:100%;background:linear-gradient(90deg,#1f6feb,#7c3aed);transition:width .4s}
+  .hint{font-size:11px;color:var(--mut);text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>Stratégie de branches Git <span>· plateforme d'intégration (Kubernetes + Kafka)</span></h1>
+  <div class="tabs" id="tabs"></div>
+</header>
+<div id="wrap"><div id="stage">
+  <div class="panel" style="left:15px;top:10px;width:1130px;height:328px"><div class="ttl">Dépôt Git <small>main = prochaine version de prod · branches courtes · release à la demande</small></div>
+    <div class="leg"><span style="color:#7c3aed">▭ -rc.N = candidat</span> &nbsp;·&nbsp; <span style="color:#15803d">▭ vX.Y.Z = allé en prod</span></div></div>
+  <svg id="g"></svg>
+  <div id="lanes"></div>
+  <div id="envs"></div>
+  <div class="pipe"><div class="lbl">Pipeline</div><div class="ptxt" id="ptxt"></div><div class="chips" id="chips"></div></div>
+  <div id="fly"></div>
+  <div id="summary">
+    <button class="close" onclick="document.getElementById('summary').classList.remove('on')">✕</button>
+    <h2>Récapitulatif : les règles de la stratégie</h2>
+    <div style="color:var(--mut);font-size:12.5px">Trunk-based development : un seul tronc, <code>main</code>, dans lequel on ne merge que du code testé et prêt pour la prod. Les versions sont des <b>tags</b>, et une branche release n'existe que si on en a besoin.</div>
+    <div class="grid">
+      <div>
+        <h3 style="color:var(--main)">Branches</h3>
+        <ul>
+          <li><code>main</code> : protégée, prochaine version de prod. <b>Merger = prêt pour la prod</b>, donc on part en prod rapidement.</li>
+          <li><code>feature/*</code>, <code>bugfix/*</code>, <code>hotfix/*</code> : courtes, créées depuis main, <b>squash merge</b> (un commit = un revert possible).</li>
+          <li>Pas de branche <code>develop</code>, ni de branches qui suivent les environnements.</li>
+          <li>Gros développement : <b>découper</b> en morceaux livrables, ou <b>feature flag</b> désactivé par défaut.</li>
+          <li><code>release/x.y</code> : <b>seulement si main ≠ prod</b>. Créée depuis le tag de la version en prod, cherry-picks venant de main uniquement, supprimée quand la version suivante est stable.</li>
+        </ul>
+      </div>
+      <div>
+        <h3 style="color:var(--purple)">Tests et environnements</h3>
+        <ul>
+          <li><b>Sandbox</b> (optionnelle) : développer sans bloquer personne.</li>
+          <li><b>DEV</b> : main automatiquement, et <b>réservation (verrou)</b> pour valider une branche avant le merge. Règles : branche à jour depuis main, durée limitée, merge aussitôt, retour automatique à main, messages Kafka compatibles.</li>
+          <li><b>QUALITÉ</b> : tags <code>-rc.N</code>. <b>PROD</b> : tags finaux, après approbation.</li>
+          <li><b>Construire une fois, déployer partout</b> : la même image va de QUALITÉ à PROD.</li>
+        </ul>
+      </div>
+      <div>
+        <h3 style="color:var(--ok)">Tags, images et Kafka</h3>
+        <ul>
+          <li><b>DEV</b> : pas de tag (<code>app:main-&lt;commit&gt;</code>). <b>rc</b> : créé par le pipeline à l'entrée en QUALITÉ. <b>Final</b> : créé après l'approbation, sur le même commit que le dernier rc, <b>avant</b> le déploiement.</li>
+          <li>Tags protégés : <b>jamais déplacés ni réutilisés</b>. Les rc restent dans Git (journal).</li>
+          <li>Registre : images main 30 j, rc 60 à 90 j, versions finales jamais supprimées.</li>
+          <li>Rollback = redéployer l'image précédente, sans toucher à Git.</li>
+          <li>Kafka : topics préfixés en sandbox ; une branche en DEV <b>remplace</b> le pod avec les mêmes consumer groups.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="no">⛔ <b>À éviter :</b> une branche <code>develop</code> ou <code>qa</code> permanente · plusieurs branches déployées en même temps en DEV · corriger sur release sans reporter dans main · déplacer ou réutiliser un tag · recompiler entre QUALITÉ et PROD · reset ou push forcé sur main (utiliser <code>git revert</code>).</div>
+  </div>
+</div></div>
+<footer>
+  <div id="cap"><div class="meta"></div><div class="t"></div><div class="b"></div></div>
+  <div class="ctrl">
+    <div class="btns">
+      <button id="bRestart" title="Recommencer">⏮</button>
+      <button id="bPrev" title="Étape précédente">◀</button>
+      <button id="bPlay" class="main" title="Lecture automatique">▶</button>
+      <button id="bNext" title="Étape suivante">▶▶</button>
+    </div>
+    <div class="prog"><i id="progbar"></i></div>
+    <div class="hint">← → pour naviguer · Espace pour lecture/pause</div>
+  </div>
+</footer>
+
+<script>
+const W=1160,H=640;
+const Y={rel:85,main:150,feat:215,hot:275};
+const C={rel:'#7c3aed',main:'#1f6feb',feat:'#059669',hot:'#dc2626'};
+const NS='http://www.w3.org/2000/svg';
+
+/* ---------- Éléments du graphe Git ---------- */
+const EL={};
+function S(id,x1,l1,x2,l2,c,dash){EL[id]={t:'seg',x1,y1:Y[l1],x2,y2:Y[l2],c:C[c||l2],dash};}
+function N(id,x,l,label,c){EL[id]={t:'node',x,y:Y[l],label,c:c||C[l]};}
+function T(id,x,l,text,color,idx=0){EL[id]={t:'tag',x,y:Y[l]-22-idx*20,text,c:color};}
+const RC='#7c3aed',FIN='#15803d';
+// tronc
+N('c1',230,'main','c1');S('sm1',230,'main',290,'main');N('c2',290,'main','c2');T('t13',290,'main','v1.3.0',FIN);
+// F-101
+S('sf1',290,'main',335,'feat');N('f1',335,'feat','f1');S('sf2',335,'feat',370,'feat');N('f2',370,'feat','f2');
+S('sm3',290,'main',415,'main');S('smg1',370,'feat',415,'main','feat');N('m3',415,'main','m3');
+// F-102 (échec puis correction)
+S('sg0',415,'main',455,'feat');N('g1',455,'feat','test KO','#dc2626');S('sg1',455,'feat',490,'feat');N('g2',490,'feat','fix');
+S('smg2',490,'feat',540,'main','feat');S('sm4',415,'main',540,'main');N('m4',540,'main','m4');T('trc1',540,'main','v1.4.0-rc.1',RC);
+// B-205
+S('sb1',540,'main',580,'feat');N('b1',580,'feat','b1');S('smg3',580,'feat',625,'main','feat');S('sm5',540,'main',625,'main');N('m5',625,'main','m5');
+T('trc2',625,'main','v1.4.0-rc.2',RC);T('t140',625,'main','v1.4.0',FIN,1);
+// H-301
+S('sh1',625,'main',665,'hot');N('h1',665,'hot','h1');S('smg5',665,'hot',710,'main','hot');S('sm6',625,'main',710,'main');N('m6',710,'main','m6');
+T('trc3',710,'main','v1.4.1-rc.1',RC);T('t141',710,'main','v1.4.1',FIN,1);
+// F-103 + revert
+S('sf3',710,'main',750,'feat');N('f3',750,'feat','f3');S('smg6',750,'feat',795,'main','feat');S('sm7',710,'main',795,'main');N('m7',795,'main','m7');
+S('sm8',795,'main',840,'main');N('rv',840,'main','','#64748b');T('trv',840,'main','↩ revert m7','#475569');
+// F-104 (feature flag)
+S('sf4',840,'main',875,'feat');N('f4',875,'feat','f4');S('smg7',875,'feat',920,'main','feat');S('sm9',840,'main',920,'main');N('m8',920,'main','m8');T('tflag',920,'main','🚩 F-104 OFF','#b45309',1);
+// release à la demande
+S('sr0',710,'main',765,'rel');N('r0',765,'rel','');
+// H-302 + cherry-pick
+S('sh2',920,'main',955,'hot');N('h2',955,'hot','h2');S('smg9',955,'hot',1000,'main','hot');S('sm10',920,'main',1000,'main');N('m9',1000,'main','m9');
+S('sr1',765,'rel',1060,'rel');S('scp',1000,'main',1060,'rel','rel',true);N('r1',1060,'rel','');T('trc4',1060,'rel','v1.4.2-rc.1',RC);T('t142',1060,'rel','v1.4.2',FIN,1);
+
+const svg=document.getElementById('g');
+svg.innerHTML=`<g id="guides"></g><g id="segs"></g><g id="tags"></g><g id="nodes"></g>`;
+const gg=svg.querySelector('#guides');
+for(const l in Y){const ln=document.createElementNS(NS,'line');ln.setAttribute('class','guide');ln.setAttribute('x1',200);ln.setAttribute('x2',1130);ln.setAttribute('y1',Y[l]);ln.setAttribute('y2',Y[l]);gg.appendChild(ln);}
+const segG=svg.querySelector('#segs'),nodeG=svg.querySelector('#nodes'),tagG=svg.querySelector('#tags');
+const elDom={};
+function mk(id,anim){
+  const e=EL[id];let el;
+  if(e.t==='seg'){el=document.createElementNS(NS,'path');
+    const k=Math.min(35,Math.abs(e.x2-e.x1)/2);
+    const d=e.y1===e.y2?`M${e.x1} ${e.y1} L${e.x2} ${e.y2}`:`M${e.x1} ${e.y1} C${e.x1+k} ${e.y1}, ${e.x2-k} ${e.y2}, ${e.x2} ${e.y2}`;
+    el.setAttribute('d',d);el.setAttribute('stroke',e.c);el.setAttribute('class','seg'+(e.dash?' dash':'')+(anim?' new':''));segG.appendChild(el);}
+  else if(e.t==='node'){el=document.createElementNS(NS,'g');el.setAttribute('class','node'+(anim?' new':''));
+    el.innerHTML=`<circle class="ring" cx="${e.x}" cy="${e.y}" r="9" fill="none" stroke="${e.c}" stroke-width="2" opacity="0"></circle><circle cx="${e.x}" cy="${e.y}" r="8" fill="${e.c}"></circle>`+(e.label?`<text x="${e.x}" y="${e.y+21}">${e.label}</text>`:'');nodeG.appendChild(el);}
+  else{el=document.createElementNS(NS,'g');el.setAttribute('class','tagp'+(anim?' new':''));
+    const w=e.text.length*5.8+14,x0=e.x+6-w;
+    el.innerHTML=`<rect x="${x0}" y="${e.y-9}" width="${w}" height="18" rx="9" fill="#fff" stroke="${e.c}" stroke-width="1.5"></rect><text x="${x0+w/2}" y="${e.y+3.5}" text-anchor="middle" fill="${e.c}">${e.text}</text>`;tagG.appendChild(el);}
+  elDom[id]=el;
+}
+
+/* ---------- Libellés des branches ---------- */
+const LANES={rel:'release/x.y',main:'main',feat:'feature/* · bugfix/*',hot:'hotfix/*'};
+const laneDom={};
+for(const l in Y){const d=document.createElement('div');d.className='lanelbl';d.style.top=(Y[l]-12)+'px';d.style.color=C[l];
+  d.innerHTML=`${LANES[l]}<span class="iso">= PROD</span><small></small>`;document.getElementById('lanes').appendChild(d);laneDom[l]=d;}
+
+/* ---------- Environnements ---------- */
+const ENVS=[['sbx','🧪 Sandbox','namespace éphémère · optionnelle',15,'#059669'],['dev','DEV','main · verrou pour valider une branche',300,'#1f6feb'],['qa','QUALITÉ','tags candidats -rc.N',585,'#7c3aed'],['prod','PROD','tags finaux après approbation',870,'#15803d']];
+const envDom={},ENVC={};
+ENVS.forEach(([k,nm,sub,x,c])=>{const d=document.createElement('div');d.className='env';d.style.left=x+'px';d.style.width='275px';
+  d.innerHTML=`<div class="nm" style="color:${c}">${nm}</div><div class="hd"></div><div class="sub">${sub}</div><div class="ver"></div><div class="src"></div><div class="st"></div><div class="lines"></div>`;
+  document.getElementById('envs').appendChild(d);envDom[k]=d;ENVC[k]={x:x+137,y:455};});
+
+/* ---------- Pipeline ---------- */
+const CHIPS=['Build','Tests','Sandbox','Réserver DEV','Test DEV','Revue','Merge','DEV auto','Tag rc','QUALITÉ','Approbation','Tag final','PROD'];
+const GATES=['Revue','Approbation'];
+document.getElementById('chips').innerHTML=CHIPS.map((c,i)=>`<span class="chip${GATES.includes(c)?' gate':''}${c==='Réserver DEV'?' lockc':''}" data-c="${c}">${GATES.includes(c)?'🔒 ':c==='Réserver DEV'?'🔐 ':''}${c}</span>`+(i<CHIPS.length-1?'<i>›</i>':'')).join('');
+
+/* ---------- Modèle ---------- */
+function fresh(){
+  return {els:['c1','sm1','c2','t13'],hl:'c2',iso:'main',
+    lane:{rel:{sub:'à la demande seulement',dim:true},main:{sub:'prochaine version de prod',dim:false},feat:{sub:'',dim:true},hot:{sub:'',dim:true}},
+    env:{sbx:{ver:'—',src:'Optionnelle : tests de développement',st:'empty',stt:'',lines:[],badge:''},
+         dev:{ver:'app:main-c2',src:'main (c2)',st:'ok',stt:'✓ à jour',lines:[],badge:''},
+         qa:{ver:'app:1.3.0',src:'tag v1.3.0',st:'ok',stt:'✓ validée',lines:[],badge:''},
+         prod:{ver:'app:1.3.0',src:'tag v1.3.0',st:'ok',stt:'✓ en service',lines:[],badge:''}},
+    pipe:{on:[],txt:''},fly:[],summary:false};
+}
+const add=(m,...ids)=>ids.forEach(i=>{if(!m.els.includes(i))m.els.push(i);});
+const E=(m,k,o)=>{Object.assign(m.env[k],o);};
+const SBX=n=>({ver:'app:pr-'+n,src:'PR #'+n+' · namespace sbx-pr-'+n,st:'deploy',stt:'▶ tests de développement',lines:[`topics : sbx-pr-${n}.*`,`groups : *-sbx-pr-${n}`,`backends : API / WCF de DEV`],badge:''});
+const SBX0=()=>({ver:'—',src:'Namespace et topics supprimés',st:'empty',stt:'',lines:[],badge:''});
+const LOCK=(br,img,stt)=>({ver:'app:'+img,src:'branche '+br,st:'lock',stt:stt||'▶ validation avant le merge',lines:[`réservé par : ${br}`,`branche mise à jour depuis main`,`expire dans 4 h (sinon retour à main)`],badge:'🔒 RÉSERVÉ'});
+const DEVMAIN=(sha,stt,st,lines)=>({ver:'app:main-'+sha,src:'main ('+sha+')',st:st||'deploy',stt:stt||'▶ déployé automatiquement',lines:lines||[],badge:''});
+
+const steps=[
+/* 0 */{sc:'Départ',title:'Point de départ : main = la prochaine version de prod',text:`<b>main</b> est le tronc, protégé et modifié seulement par pull request. Règle d'or : <b>merger dans main veut dire « prêt pour la prod »</b>. Il n'y a ni branche <code>develop</code>, ni branche release permanente : les versions sont identifiées par des <b>tags</b>. <code>v1.3.0</code> est en prod, et pour l'instant main = prod. DEV exécute main.`,
+ run(m){m.hl='c2';}},
+/* 1 */{sc:'Feature',title:'Nouvelle fonctionnalité : branche feature/F-101',text:`Le développeur crée <code>feature/F-101</code> <b>depuis main</b>, une branche courte. À chaque push, la CI compile et lance les tests unitaires, <b>sans rien déployer</b>.`,
+ run(m){add(m,'sf1','f1');m.hl='f1';m.lane.feat={sub:'feature/F-101',dim:false};m.pipe={on:['Build','Tests'],txt:'à chaque push : compilation + tests unitaires'};}},
+/* 2 */{sc:'Feature',title:'Étape optionnelle : une sandbox pour développer',text:`Pour avancer sans bloquer personne, le développeur peut déployer dans une <b>sandbox</b> (namespace <code>sbx-pr-101</code>, topics Kafka préfixés, consumer groups suffixés). C'est un outil de <b>développement</b> : elle ne remplace pas la validation en DEV. Une petite équipe peut s'en passer au début.`,
+ run(m){add(m,'sf2','f2');m.hl='f2';E(m,'sbx',SBX(101));m.pipe={on:['Build','Tests','Sandbox'],txt:'image app:pr-101 → sandbox (optionnelle)'};m.fly=[['pipe','sbx','app:pr-101']];}},
+/* 3 */{sc:'Feature',title:'Validation finale : on réserve DEV pour la branche',text:`Avant de merger, la branche est validée dans l'environnement le plus réaliste. Le développeur <b>met sa branche à jour depuis main</b>, <b>réserve DEV</b> (verrou : une seule branche à la fois) et y déploie son image. Elle <b>remplace</b> le pod de DEV avec les <b>mêmes consumer groups</b> : aucun pod en double ne vole de messages. Les messages produits doivent rester compatibles avec la version de main.`,
+ run(m){m.hl='f2';E(m,'dev',LOCK('feature/F-101','f101-8f3a'));m.pipe={on:['Build','Tests','Réserver DEV','Test DEV'],txt:'verrou DEV + déploiement de la branche, durée limitée (ex. 4 h)'};m.fly=[['pipe','dev','app:f101-8f3a']];}},
+/* 4 */{sc:'Feature',title:'Test validé : merge immédiat dans main',text:`Le test réussit. Le merge est autorisé si la CI est verte et la revue approuvée. <b>Squash merge</b> : toute la feature devient un seul commit (m3), facile à annuler. On merge <b>tout de suite</b> : le verrou est libéré et <b>main est redéployé automatiquement en DEV</b> pour vérifier l'intégration. La sandbox et ses topics sont supprimés.`,
+ run(m){add(m,'sm3','smg1','m3');m.hl='m3';m.iso=null;m.lane.feat={sub:'feature/F-101 (supprimée)',dim:true};E(m,'sbx',SBX0());E(m,'dev',DEVMAIN('m3'));m.pipe={on:['Revue','Merge','DEV auto'],txt:'merge → image app:main-m3 (nommée d\'après le commit, sans tag) → DEV'};m.fly=[['pipe','dev','app:main-m3']];}},
+/* 5 */{sc:'Échec en DEV',title:'Autre feature : le test en DEV échoue',text:`<code>feature/F-102</code> est déployée en DEV sous verrou, et le test <b>échoue</b>. Point important : <b>main n'a jamais reçu ce code</b> : il reste propre et livrable. Les autres ne sont gênés que pendant la durée du verrou.`,
+ run(m){add(m,'sg0','g1');m.hl='g1';m.lane.feat={sub:'feature/F-102',dim:false};E(m,'dev',{ver:'app:f102-c41d',src:'branche feature/F-102',st:'incident',stt:'❌ test échoué',lines:[`réservé par : feature/F-102`,`main n'est pas touché`],badge:'🔒 RÉSERVÉ'});m.pipe={on:['Build','Tests','Réserver DEV','Test DEV'],txt:'échec du test en DEV : on ne merge pas'};m.fly=[['pipe','dev','app:f102-c41d']];}},
+/* 6 */{sc:'Échec en DEV',title:'Retour automatique à main, puis correction',text:`On libère le verrou (à la main, ou automatiquement après la durée maximale) et le pipeline <b>redéploie main</b> en DEV : l'environnement est propre pour tout le monde. Le développeur corrige dans sa branche (commit « fix »).`,
+ run(m){add(m,'sg1','g2');m.hl='g2';E(m,'dev',DEVMAIN('m3','↩ main redéployé, verrou libéré','ok'));m.pipe={on:['DEV auto'],txt:'verrou libéré → retour automatique à main'};m.fly=[['pipe','dev','app:main-m3']];}},
+/* 7 */{sc:'Échec en DEV',title:'Nouveau test réussi : merge dans main',text:`Le développeur réserve de nouveau DEV, le test passe et il merge (m4). main ne contient que du code <b>testé en DEV</b>.`,
+ run(m){add(m,'smg2','sm4','m4');m.hl='m4';m.lane.feat={sub:'feature/F-102 (supprimée)',dim:true};E(m,'dev',DEVMAIN('m4'));m.pipe={on:['Réserver DEV','Test DEV','Revue','Merge','DEV auto'],txt:'test DEV OK → squash merge → DEV (main)'};m.fly=[['pipe','dev','app:main-m4']];}},
+/* 8 */{sc:'Livraison',title:'On livre : tag candidat v1.4.0-rc.1 en QUALITÉ',text:`Quand main contient ce qu'on veut livrer, le pipeline pose le tag <code>v1.4.0-rc.1</code> sur m4 <b>à l'entrée en QUALITÉ</b>. L'image <code>app:main-m4</code> est <b>promue sans recompilation</b> : elle reçoit seulement son nouveau nom. Un tag <b>-rc</b> est un <b>candidat</b> : il peut ne jamais aller en prod. En DEV, pas de tag : l'image est identifiée par le commit.`,
+ run(m){add(m,'trc1');m.hl='m4';E(m,'dev',DEVMAIN('m4','✓ à jour','ok'));E(m,'qa',{ver:'app:1.4.0-rc.1',src:'tag v1.4.0-rc.1 · commit m4',st:'deploy',stt:'▶ recette en cours',lines:['même image que app:main-m4'],badge:''});m.pipe={on:['Tag rc','QUALITÉ'],txt:'tag rc créé par le pipeline, image promue'};m.fly=[['pipe','qa','1.4.0-rc.1']];}},
+/* 9 */{sc:'Livraison',title:'Bug en recette : on corrige d\'abord dans main',text:`La recette trouve un bug. On ne corrige pas sur une branche de livraison : on crée <code>bugfix/B-205</code> <b>depuis main</b>, avec le même flux (test en DEV sous verrou). Ici, <b>main n'a pas avancé depuis rc.1</b> : une nouvelle rc suffira. S'il avait avancé avec du code non livré, on créerait une branche release depuis le tag (voir « Hotfix + release »).`,
+ run(m){add(m,'sb1','b1');m.hl='b1';m.lane.feat={sub:'bugfix/B-205',dim:false};E(m,'qa',{ver:'app:1.4.0-rc.1',src:'tag v1.4.0-rc.1',st:'incident',stt:'❌ bug trouvé en recette',lines:[],badge:''});E(m,'dev',LOCK('bugfix/B-205','b205-72ce'));m.pipe={on:['Build','Tests','Réserver DEV','Test DEV'],txt:'correction testée en DEV avant le merge'};m.fly=[['pipe','dev','app:b205-72ce']];}},
+/* 10 */{sc:'Livraison',title:'Merge, puis nouveau candidat rc.2',text:`Merge dans main (m5) et déploiement automatique en DEV. Le pipeline crée alors <code>v1.4.0-rc.2</code> sur m5 et l'envoie en QUALITÉ. Les numéros de version ne sautent pas : les échecs restent dans les rc.`,
+ run(m){add(m,'smg3','sm5','m5','trc2');m.hl='m5';m.lane.feat={sub:'bugfix/B-205 (supprimée)',dim:true};E(m,'dev',DEVMAIN('m5'));E(m,'qa',{ver:'app:1.4.0-rc.2',src:'tag v1.4.0-rc.2 · commit m5',st:'deploy',stt:'▶ nouvelle recette',lines:['image promue depuis app:main-m5'],badge:''});m.pipe={on:['Revue','Merge','DEV auto','Tag rc','QUALITÉ'],txt:'merge → DEV, puis tag rc.2 → QUALITÉ'};m.fly=[['pipe','dev','app:main-m5'],['pipe','qa','1.4.0-rc.2']];}},
+/* 11 */{sc:'Livraison',title:'Approbation, tag final v1.4.0, puis déploiement en PROD',text:`La recette est validée et la mise en prod <b>approuvée</b>. Le pipeline crée <code>v1.4.0</code> sur <b>le même commit que rc.2</b>, <b>avant</b> le déploiement, puis déploie <b>la même image</b> en PROD. Un tag sans « -rc » = une version qui est allée en prod. <b>Aucune branche release n'a été nécessaire</b> : main = prod à nouveau.`,
+ run(m){add(m,'t140');m.hl='m5';m.iso='main';E(m,'dev',DEVMAIN('m5','✓ à jour','ok'));E(m,'qa',{ver:'app:1.4.0-rc.2',src:'tag v1.4.0-rc.2',st:'ok',stt:'✓ recette validée',lines:[],badge:''});E(m,'prod',{ver:'app:1.4.0',src:'tag v1.4.0 · commit m5',st:'deploy',stt:'▶ mise en production',lines:['même image que la QUALITÉ'],badge:''});m.pipe={on:['Approbation','Tag final','PROD'],txt:'tag final créé après l\'approbation, avant le déploiement'};m.fly=[['qa','prod','app:1.4.0']];}},
+/* 12 */{sc:'Hotfix',title:'Incident en prod : main = prod, on part de main',text:`Un incident survient en prod (v1.4.0). Comme <b>main = prod</b> (rien de nouveau depuis le tag), on crée <code>hotfix/H-301</code> depuis main et le correctif suit le flux habituel, en accéléré : le hotfix passe en priorité sur le verrou DEV.`,
+ run(m){add(m,'sh1','h1');m.hl='h1';m.lane.hot={sub:'hotfix/H-301',dim:false};E(m,'prod',{ver:'app:1.4.0',src:'tag v1.4.0',st:'incident',stt:'🔥 incident sur v1.4.0',lines:[],badge:''});E(m,'qa',{ver:'app:1.4.0-rc.2',src:'tag v1.4.0-rc.2',st:'ok',stt:'✓ recette validée',lines:[],badge:''});E(m,'dev',LOCK('hotfix/H-301','h301-5b9a','▶ validation du correctif'));m.pipe={on:['Build','Tests','Réserver DEV','Test DEV'],txt:'hotfix : priorité sur le verrou DEV'};m.fly=[['pipe','dev','app:h301-5b9a']];}},
+/* 13 */{sc:'Hotfix',title:'Merge express et candidat v1.4.1-rc.1',text:`Revue express et merge dans main (m6), redéployé en DEV. Le pipeline crée <code>v1.4.1-rc.1</code> et l'envoie en QUALITÉ pour des tests de non-régression ciblés. main ne contient que le correctif en plus de la prod.`,
+ run(m){add(m,'smg5','sm6','m6','trc3');m.hl='m6';m.iso=null;m.lane.hot={sub:'hotfix/H-301 (supprimée)',dim:true};E(m,'dev',DEVMAIN('m6'));E(m,'qa',{ver:'app:1.4.1-rc.1',src:'tag v1.4.1-rc.1 · commit m6',st:'deploy',stt:'▶ non-régression ciblée',lines:['v1.4.0 + correctif'],badge:''});m.pipe={on:['Revue','Merge','DEV auto','Tag rc','QUALITÉ'],txt:'merge express → DEV, tag rc.1 → QUALITÉ'};m.fly=[['pipe','dev','app:main-m6'],['pipe','qa','1.4.1-rc.1']];}},
+/* 14 */{sc:'Hotfix',title:'Approbation accélérée, tag v1.4.1, puis PROD',text:`Approbation accélérée, tag final <code>v1.4.1</code> sur le même commit que rc.1, et déploiement de la <b>même image</b> en PROD. L'incident est résolu, et le correctif est <b>déjà dans main</b> : rien à reporter, rien à oublier.`,
+ run(m){add(m,'t141');m.hl='m6';m.iso='main';E(m,'dev',DEVMAIN('m6','✓ à jour','ok'));E(m,'qa',{ver:'app:1.4.1-rc.1',src:'tag v1.4.1-rc.1',st:'ok',stt:'✓ validée',lines:[],badge:''});E(m,'prod',{ver:'app:1.4.1',src:'tag v1.4.1 · commit m6',st:'deploy',stt:'▶ hotfix déployé',lines:['incident résolu'],badge:''});m.pipe={on:['Approbation','Tag final','PROD'],txt:'approbation accélérée, même image'};m.fly=[['qa','prod','app:1.4.1']];}},
+/* 15 */{sc:'Revert & flag',title:'Une feature mergée pose problème : git revert',text:`<code>feature/F-103</code> est mergée dans main (m7), mais l'intégration de main en DEV révèle un problème. Pas de panique : avec le <b>squash merge</b>, la feature est <b>un seul commit</b>. Un <code>git revert m7</code> (nouveau commit, historique conservé) nettoie main, et la feature sera remergée plus tard, corrigée. Jamais de reset ni de push forcé sur main.`,
+ run(m){add(m,'sf3','f3','smg6','sm7','m7','sm8','rv','trv');m.hl='rv';m.iso=null;m.lane.feat={sub:'feature/F-103 (supprimée)',dim:true};E(m,'prod',{ver:'app:1.4.1',src:'tag v1.4.1',st:'ok',stt:'✓ en service',lines:[],badge:''});E(m,'dev',DEVMAIN('rv','↩ main sans F-103, de nouveau sain'));m.pipe={on:['Revue','Merge','DEV auto'],txt:'revert de m7 → main redéployé en DEV'};m.fly=[['pipe','dev','app:main-rv']];}},
+/* 16 */{sc:'Revert & flag',title:'Grosse feature : découper, ou la cacher derrière un feature flag',text:`<code>feature/F-104</code> prendra des semaines. Plutôt qu'une branche longue (conflits, test tardif) : <b>on la découpe en petits morceaux livrables</b>, ou on merge le code <b>désactivé par un feature flag</b>. main reste livrable, le code voyage dans les environnements avec le flag à OFF, et l'activation se fait par <b>configuration, sans redéploiement</b> (le retour arrière aussi).`,
+ run(m){add(m,'sf4','f4','smg7','sm9','m8','tflag');m.hl='m8';m.lane.feat={sub:'feature/F-104 (supprimée)',dim:true};E(m,'dev',DEVMAIN('m8',null,null,['flag F-104 : OFF','code inactif, main livrable']));m.pipe={on:['Revue','Merge','DEV auto'],txt:'merge avec le flag F-104 à OFF → DEV'};m.fly=[['pipe','dev','app:main-m8']];}},
+/* 17 */{sc:'Hotfix + release',title:'Nouvel incident, mais main a avancé : on crée release/1.4 depuis le tag',text:`Nouvel incident en prod (v1.4.1). Mais main contient maintenant du code <b>qui n'est pas en prod</b> (F-104, même désactivé, F-103 et son revert). On ne peut plus livrer depuis main. C'est le seul cas où l'on crée une <b>branche release</b> : <code>git switch -c release/1.4 v1.4.1</code>, <b>depuis le tag de la version en prod</b>. Elle devient la branche iso-prod.`,
+ run(m){add(m,'sr0','r0');m.hl='r0';m.iso='rel';m.lane.rel={sub:'créée depuis le tag v1.4.1',dim:false};E(m,'dev',DEVMAIN('m8','✓ à jour','ok',['flag F-104 : OFF']));E(m,'prod',{ver:'app:1.4.1',src:'tag v1.4.1',st:'incident',stt:'🔥 nouvel incident',lines:['main ≠ prod','livraison depuis main impossible'],badge:''});m.pipe={on:[],txt:'création de release/1.4 à partir du tag v1.4.1'};}},
+/* 18 */{sc:'Hotfix + release',title:'Correctif dans main d\'abord, puis cherry-pick vers release/1.4',text:`Le correctif est d'abord fait et testé <b>dans main</b> (hotfix/H-302, verrou DEV, merge m9). Puis <b>seul ce commit</b> est reporté par <code>cherry-pick</code> dans release/1.4, qui reçoit <code>v1.4.2-rc.1</code>. L'image est construite <b>depuis la branche iso-prod</b> : v1.4.1 + correctif, sans F-104. Corriger dans main d'abord évite d'oublier le correctif.`,
+ run(m){add(m,'sh2','h2','smg9','sm10','m9','scp','sr1','r1','trc4');m.hl='r1';m.lane.hot={sub:'hotfix/H-302 (supprimée)',dim:true};E(m,'dev',DEVMAIN('m9',null,null,['flag F-104 : OFF']));E(m,'qa',{ver:'app:1.4.2-rc.1',src:'release/1.4 · tag v1.4.2-rc.1',st:'deploy',stt:'▶ non-régression ciblée',lines:['v1.4.1 + correctif, sans F-104'],badge:''});m.pipe={on:['Merge','DEV auto','Tag rc','QUALITÉ'],txt:'main d\'abord, cherry-pick vers release/1.4, image construite depuis la release'};m.fly=[['pipe','dev','app:main-m9'],['pipe','qa','1.4.2-rc.1']];}},
+/* 19 */{sc:'Hotfix + release',title:'Approbation, tag v1.4.2, PROD, puis on supprime la branche',text:`Approbation, tag <code>v1.4.2</code> sur le commit de release/1.4, et déploiement de la même image. Une fois la prochaine version livrée depuis main et stable, <b>on supprime release/1.4</b> : les <b>tags</b> gardent l'historique, la branche n'a plus d'utilité. Il n'y a jamais plus d'une branche release active.`,
+ run(m){add(m,'t142');m.hl='r1';m.lane.rel={sub:'= v1.4.2 en prod',dim:false};E(m,'dev',DEVMAIN('m9','✓ à jour','ok',['flag F-104 : OFF']));E(m,'qa',{ver:'app:1.4.2-rc.1',src:'tag v1.4.2-rc.1',st:'ok',stt:'✓ validée',lines:[],badge:''});E(m,'prod',{ver:'app:1.4.2',src:'tag v1.4.2 · release/1.4',st:'deploy',stt:'▶ hotfix déployé',lines:['incident résolu'],badge:''});m.pipe={on:['Approbation','Tag final','PROD'],txt:'tag final sur release/1.4, même image qu\'en QUALITÉ'};m.fly=[['qa','prod','app:1.4.2']];}},
+/* 20 */{sc:'Rollback',title:'Une mise en prod casse tout : rollback par l\'image',text:`Premier réflexe : <b>redéployer l'image précédente</b> (<code>helm rollback</code> ou Argo CD), en quelques minutes, <b>sans toucher à Git</b> et sans recompiler. Les tags ne bougent pas : un tag n'est <b>jamais déplacé ni réutilisé</b>, et la correction sortira sous un nouveau numéro. Pour savoir quand une version a vraiment été déployée, on consulte l'historique des déploiements (pipeline, Argo CD, Helm), pas les tags.`,
+ run(m){m.hl=null;E(m,'dev',DEVMAIN('m9','✓ à jour','ok',['flag F-104 : OFF']));E(m,'prod',{ver:'app:1.4.1',src:'image précédente (registre)',st:'rollback',stt:'↩ rollback : v1.4.2 → v1.4.1',lines:['aucun changement dans Git','correction ensuite par un nouveau hotfix'],badge:''});m.pipe={on:['PROD'],txt:'rollback = redéploiement de l\'image précédente'};m.fly=[['pipe','prod','app:1.4.1']];}},
+/* 21 */{sc:'Nettoyage',title:'Nettoyage : les tags restent, les images ont une rétention',text:`Dans Git, on <b>garde les tags rc</b> : ils coûtent presque rien et servent de journal des recettes (on peut les supprimer après 6 mois par un job planifié, à condition que le compte du pipeline ait le droit de supprimer des tags protégés). Le vrai nettoyage est dans le <b>registre Docker</b> : images main 30 jours, images rc 60 à 90 jours, <b>images de version finale jamais supprimées</b> (au moins les 5 à 10 dernières pour le rollback).`,
+ run(m){m.hl=null;E(m,'dev',{st:'ok',stt:'🧹 rétention du registre',lines:['images app:main-<commit>','conservées 30 jours']});E(m,'qa',{st:'ok',stt:'🧹 rétention du registre',lines:['images app:X.Y.Z-rc.N','conservées 60 à 90 jours']});E(m,'prod',{ver:'app:1.4.1',src:'tag v1.4.1',st:'ok',stt:'🧹 rétention du registre',lines:['images app:X.Y.Z','jamais supprimées (rollback)']});m.pipe={on:[],txt:'job planifié : application des règles de rétention'};}},
+/* 22 */{sc:'Récap',title:'Récapitulatif',text:`Un tronc (main) toujours prêt pour la prod, des branches courtes validées en DEV sous verrou avant le merge, des tags rc puis finaux, une branche release seulement quand main ≠ prod, et un rollback par l'image.`,
+ run(m){m.hl=null;m.summary=true;}},
+];
+
+/* ---------- Rendu ---------- */
+const stage=document.getElementById('stage');
+function render(m,anim){
+  for(const id in elDom)if(!m.els.includes(id)){elDom[id].remove();delete elDom[id];}
+  m.els.forEach(id=>{if(!elDom[id])mk(id,anim);});
+  for(const id in elDom){const e=EL[id];if(e.t==='node')elDom[id].classList.toggle('hl',id===m.hl);}
+  for(const l in laneDom){const d=laneDom[l],s=m.lane[l];d.classList.toggle('dim',s.dim);d.classList.toggle('isoprod',m.iso===l);d.querySelector('small').textContent=s.sub;}
+  for(const k in envDom){const d=envDom[k],e=m.env[k];d.className='env '+e.st;d.querySelector('.ver').textContent=e.ver;d.querySelector('.src').textContent=e.src;d.querySelector('.st').textContent=e.stt;d.querySelector('.lines').innerHTML=e.lines.map(x=>x.replace(/</g,'&lt;')).join('<br>');
+    const hd=d.querySelector('.hd');hd.textContent=e.badge||'';hd.style.display=e.badge?'block':'none';}
+  document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',m.pipe.on.includes(c.dataset.c)));
+  document.getElementById('ptxt').textContent=m.pipe.txt?'→ '+m.pipe.txt:'';
+  document.getElementById('summary').classList.toggle('on',m.summary);
+  if(anim){const fl=document.getElementById('fly');fl.innerHTML='';
+    m.fly.forEach(([a,b,label],i)=>{const t=document.createElement('div');t.className='flytok';t.textContent=label;fl.appendChild(t);
+      const p=a==='pipe'?{x:580,y:575}:ENVC[a],q=ENVC[b];
+      t.animate([{transform:`translate(${p.x-45}px,${p.y-12}px)`,opacity:0},{opacity:1,offset:.15},{transform:`translate(${q.x-45}px,${q.y-12}px)`,opacity:1,offset:.85},{transform:`translate(${q.x-45}px,${q.y-12}px)`,opacity:0}],{duration:1500,delay:300+i*500,easing:'ease-in-out',fill:'both'});});}
+}
+
+const scenes=[...new Set(steps.map(s=>s.sc))];
+document.getElementById('tabs').innerHTML=scenes.map((s,i)=>`<button class="tab" data-sc="${s}">${i+1}. ${s}</button>`).join('');
+let cur=0;
+function go(n){
+  n=Math.max(0,Math.min(steps.length-1,n));
+  const m=fresh();
+  for(let i=0;i<n;i++){m.fly=[];steps[i].run(m);}
+  m.fly=[];
+  stage.classList.add('noanim');document.getElementById('fly').innerHTML='';render(m,false);void stage.offsetWidth;stage.classList.remove('noanim');
+  requestAnimationFrame(()=>{m.fly=[];steps[n].run(m);render(m,true);});
+  cur=n;const s=steps[n];
+  document.querySelector('#cap .meta').textContent=`Scénario : ${s.sc} · Étape ${n+1} / ${steps.length}`;
+  document.querySelector('#cap .t').textContent=s.title;
+  document.querySelector('#cap .b').innerHTML=s.text;
+  document.getElementById('progbar').style.width=((n+1)/steps.length*100)+'%';
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.sc===s.sc));
+}
+let timer=null;const bPlay=document.getElementById('bPlay');
+function stop(){clearTimeout(timer);timer=null;bPlay.textContent='▶';}
+function play(){bPlay.textContent='⏸';const tick=()=>{if(cur>=steps.length-1){stop();return;}go(cur+1);timer=setTimeout(tick,7000);};if(cur>=steps.length-1)go(0);timer=setTimeout(tick,600);}
+bPlay.onclick=()=>timer?stop():play();
+document.getElementById('bNext').onclick=()=>{stop();go(cur+1);};
+document.getElementById('bPrev').onclick=()=>{stop();go(cur-1);};
+document.getElementById('bRestart').onclick=()=>{stop();go(0);};
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{stop();go(steps.findIndex(s=>s.sc===t.dataset.sc));});
+document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){stop();go(cur+1);}else if(e.key==='ArrowLeft'){stop();go(cur-1);}else if(e.key===' '){e.preventDefault();timer?stop():play();}});
+function fit(){const w=document.getElementById('wrap');const s=Math.min(w.clientWidth/W,w.clientHeight/H);stage.style.transform=`scale(${s})`;stage.style.left=((w.clientWidth-W*s)/2)+'px';stage.style.top=((w.clientHeight-H*s)/2)+'px';}
+window.addEventListener('resize',fit);fit();go(0);
+</script>
+</body>
+</html>
